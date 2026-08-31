@@ -1,0 +1,6 @@
+USER_INPUT,TARGET_INTENT
+sounds good,CLOSING_CONVERSATION
+Block out this hour,BLOCK_SLOTS
+No more appointments today.,BLOCK_SLOTS
+Blok my time on Munday.,BLOCK_SLOTS
+Reschedule Evan for sometime next week.,UNSUPPORTED_REQUEST

@@ -1,0 +1,26 @@
+[project]
+name = "ai-evals-principles"
+version = "0.1.0"
+description = "Routing agent + LLM-as-a-judge evaluation notebooks (AI Evals Principles)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # LangChain 1.0 LTS — pinned to the current major
+    "langchain>=1.0,<2.0",
+    "langchain-core>=1.0,<2.0",
+    "langchain-openai",
+    # Observability / evals
+    "langsmith>=0.3.0",
+    # Schema + config
+    "pydantic>=2",
+    "python-dotenv",
+    # Data / metrics
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    # Notebook kernel
+    "ipykernel",
+]
+
+[tool.uv]
+package = false

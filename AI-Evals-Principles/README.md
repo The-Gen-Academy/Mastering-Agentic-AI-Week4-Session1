@@ -153,9 +153,5 @@ In this tutorial, `gpt-5-mini` reaches ~88% accuracy but only ~0.28 F1 on the `T
 
 ## 📚 Resources
 
-- [Evals Workbook (The Gen Academy)](https://github.com/The-Gen-Academy/Mastering-Agentic-AI_Week4)
-- [LangChain Structured Output](https://python.langchain.com/docs/how_to/structured_output/)
-- [Semantic Routing Concepts](https://python.langchain.com/docs/concepts/#routing)
-- [Scikit-Learn Classification Report](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.classification_report.html)
-- [Pydantic Documentation](https://docs.pydantic.dev/)
+- [Evals Workbook (The Gen Academy)](https://docs.google.com/spreadsheets/d/1O4VwHehFm9ebc1-szXWSyOj7DI8tn5Jp7kLajBO5N_o/edit?usp=sharing)
 - [LangSmith Evaluation](https://docs.smith.langchain.com/evaluation)

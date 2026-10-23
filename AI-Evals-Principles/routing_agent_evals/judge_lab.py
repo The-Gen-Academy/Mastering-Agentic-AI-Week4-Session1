@@ -1,7 +1,7 @@
 """Reproducible Jev/LLM judge comparison. Network access is opt-in.
 
 Only the public user query and candidate intent reach the judges. Human labels
-are used by the metric and calibration functions, never by request builders.
+are used by the metric functions, never by request builders.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import math
 import time
 import urllib.error
 import urllib.request
-from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,7 +46,7 @@ JUDGE_DATA_SOURCE = {
     "snapshot_date": "2026-10-23",
     "label_column": "Vague_Utterance_Failure",
 }
-THRESHOLDS = (0.0, 0.25, 0.5, 0.7, 0.85, 0.95, 1.0)
+CONFIDENCE_THRESHOLD = 0.7  # Fixed lesson policy; not selected from human labels.
 # Reuse the original task definition and intent rules, without its legacy
 # output-format instruction or embedded input placeholders.
 POLICY = VAGUE_UTTERANCES_FAILURE_PROMPT.split("# Output format (STRICT)")[0].strip()
@@ -95,31 +94,6 @@ def load_dataset(data_dir):
     if len({r["id"] for r in rows}) != len(rows):
         raise ValueError("Duplicate test IDs")
     return rows
-
-
-def split_dataset(rows):
-    """Stable roughly 1/3 calibration, 2/3 held out, grouped by normalized query.
-
-    Stratification uses reference labels only to balance the split, never to
-    construct model inputs. Groups with mixed labels are kept together.
-    """
-    groups = defaultdict(list)
-    for row in rows:
-        groups[" ".join(row["user_query"].lower().split())].append(row)
-    strata = defaultdict(list)
-    for query, group in groups.items():
-        strata[tuple(sorted({r["human_label"] for r in group}))].append((query, group))
-    calibration_ids = set()
-    for groups_in_stratum in strata.values():
-        ordered = sorted(groups_in_stratum, key=lambda item: digest(["judge-split-v1", item[0]]))
-        count = max(1, min(len(ordered) - 1, round(len(ordered) / 3))) if len(ordered) > 1 else 0
-        for _, group in ordered[:count]:
-            calibration_ids.update(r["id"] for r in group)
-    calibration = [r for r in rows if r["id"] in calibration_ids]
-    heldout = [r for r in rows if r["id"] not in calibration_ids]
-    if not calibration or not heldout:
-        raise ValueError("Need enough examples for separate calibration and held-out sets")
-    return calibration, heldout
 
 
 def request_for(row, stage, model=None):
@@ -330,11 +304,6 @@ def run_cascade(rows, client, threshold, jev=None):
     return batch(rows, one)
 
 
-def replay_cascade(rows, jev, llm, threshold):
-    return {r["id"]: combined(jev[r["id"]], llm[r["id"]] if needs_llm(jev[r["id"]], threshold) else None)
-            for r in rows}
-
-
 def metrics(rows, predictions, method):
     if not rows:
         raise ValueError("Cannot score an empty dataset")
@@ -360,20 +329,6 @@ def metrics(rows, predictions, method):
             "unknown_cost_attempts": sum(r.get("unknown_cost_attempts", 0) for r in results),
             "unreported_cost_attempts": sum(r.get("unreported_cost_attempts", 0) for r in results),
             "llm_routes": sum(r.get("route") == "LLM" for r in results)}
-
-
-def select_threshold(calibration, jev, llm):
-    """Predeclared objective: TRUE F1, then accuracy, then fewer LLM calls.
-
-    Do not pass held-out rows here. Cost is reported separately rather than
-    treating missing cost records as free calls.
-    """
-    sweep = []
-    for threshold in THRESHOLDS:
-        result = replay_cascade(calibration, jev, llm, threshold)
-        sweep.append(dict(metrics(calibration, result, "Cascade"), threshold=threshold))
-    selected = max(sweep, key=lambda r: (r["f1_TRUE"], r["accuracy"], -r["llm_routes"], -r["threshold"]))
-    return selected["threshold"], sweep
 
 
 def confidence_bands(rows, jev, llm, threshold):

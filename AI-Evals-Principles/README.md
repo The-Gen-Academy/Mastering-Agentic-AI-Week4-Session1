@@ -20,38 +20,43 @@ Select the project's Python kernel and run these notebooks in order:
 1. `routing_agent_evals.ipynb` — define the intents and router, evaluate saved or fresh predictions.
 2. `jev_as_judge.ipynb` — direct TypeSafe API, Jev Choice judgments, real recorded results and token-based cost estimates.
 3. `llm_as_judge.ipynb` — System 1 motivation, Jev Choice judgments, independent LLM judgments,
-   calibration, confidence-based escalation, held-out accuracy and costs, and error analysis.
+   a fixed confidence cutoff of 0.7, agreement and costs on all 300 examples, and error analysis.
 
-**Live benchmark complete:** the saved notebook outputs show 300 valid TypeSafe Jev judgments
-and 300 valid independent OpenAI judgments. Raw response caches, manifests and test files
-are not included in the repository. The threshold selected on 100 calibration traces is **0.70**.
-On the separate 200-trace held-out set, the cascade sends 39 traces (19.5%) to the LLM:
+**Completed comparison:** the saved outputs use 300 valid TypeSafe Jev judgments and
+300 valid independent OpenAI judgments. All three approaches are measured on the same
+300 human-labeled examples. The Jev-first approach uses a **fixed confidence cutoff of
+0.7**: keep a valid answer at or above 0.7; otherwise ask the LLM. The code does not search
+for a cutoff or split the data into separate groups. It sends **59/300 cases (19.7%)** to
+the LLM and keeps Jev on 241.
 
-| Judge | Human-label agreement | Failure recall | TRUE F1 | Estimated USD / 1,000 traces |
+| Judge | Human-label agreement | Failure recall | TRUE F1 | Estimated USD / 1,000 examples |
 | --- | ---: | ---: | ---: | ---: |
-| Always FALSE | 93.5% | 0/13 (0%) | 0.000 | 0 |
-| Jev alone | 89.5% | 0/13 (0%) | 0.000 | $0.05552 |
-| GPT-4.1-mini alone | 78.0% | 8/13 (61.5%) | 0.267 | $0.51179 |
-| Jev then LLM | 83.5% | 5/13 (38.5%) | 0.233 | $0.15863 |
+| Always FALSE | 93.3% | 0/20 (0%) | 0.000 | $0 |
+| Jev alone | 89.3% | 0/20 (0%) | 0.000 | $0.05550 |
+| GPT-4.1-mini alone | 77.7% | 13/20 (65%) | 0.280 | $0.51101 |
+| Jev then LLM | 85.0% | 10/20 (50%) | 0.308 | $0.15923 |
 
-The cascade costs an estimated **69.0% less than LLM alone** on these traces and has higher
-agreement, but misses three failures the LLM finds. Compared with Jev alone, it detects
-five additional failures while reducing agreement. On the 39 escalated traces, the LLM
-fixes six Jev errors and introduces 18, so escalation is not a universal quality improvement.
-The low-confidence subset is harder, but the LLM is not a better overall judge of that subset.
+The Jev-first approach costs an estimated **68.8% less than LLM alone** on these examples
+and has higher agreement, but misses three failures the LLM finds. Compared with Jev
+alone, it detects ten additional failures while reducing agreement. On the 59 escalated
+cases, the LLM fixes 11 Jev errors and introduces 24, so escalation does not improve every
+metric. The low-confidence cases are harder, but the LLM is not more accurate on them overall.
 
-The full experiment (all 600 requests, including calibration and the standalone comparisons)
-has an estimated list-price cost of **$0.16995**. Costs use returned token counts and frozen
-published rates, including observed OpenAI cache counts; they are not invoices or guaranteed
-production costs. There were no unresolved judgments. Prompts and threshold selection were
-not tuned on held-out labels. These results do not justify deployment without further rubric
-and label review.
+The full comparison obtains 600 model responses, with an estimated list-price cost of
+**$0.16995**. Running only the Jev-first approach on these examples would use 300 Jev
+responses and 59 LLM responses, costing an estimated **$0.04777**. Raw response caches,
+manifests and test files are not included in the repository.
+
+Costs use returned token counts and frozen published rates, including observed OpenAI
+cache counts; they are not invoices or guaranteed production costs. There were no
+unresolved judgments. These figures describe the 300 lesson examples; they do not establish
+performance on new data. Check the policy on new human-reviewed examples before adoption.
 
 The saved outputs can be read without running code. The router defaults to replay of its
 original CSV predictions. On a fresh checkout, the judge notebooks run **live** and require
 provider credentials. Optional replay uses a run directory you generated locally:
 `JUDGE_EVIDENCE_DIR`, or the notebook's own `.runs/` directory. It checks the request,
-dataset, split, threshold and metrics against your local manifest, without new API calls.
+dataset, evaluation IDs, threshold and metrics against your local manifest, without new API calls.
 Generated responses and reports stay in ignored `.runs/` directories.
 
 For **live** mode, set the notebook's mode selector or export `ROUTER_MODE=live` /
@@ -68,9 +73,7 @@ endpoint and exact request hash; use a new `JUDGE_RUN_DIR` (or `JEV_RUN_DIR` for
 for an independent rerun. A completed live notebook writes a manifest alongside its cache;
 set `JUDGE_MODE=replay` and `JUDGE_EVIDENCE_DIR` to that directory to replay it.
 
-The recorded comparison uses `jev-1.13.0` directly and `gpt-4.1-mini-2025-04-14` directly,
-following the model families in the supplied
-[clinic notebook](https://colab.research.google.com/drive/1FtSQhtAx8rlkWlV7GA87kIcaHwHG_mL_).
+The recorded comparison uses `jev-1.13.0` directly and `gpt-4.1-mini-2025-04-14` directly.
 These identifiers are frozen for reproducibility, not claims about the newest models.
 
 ## Run in Colab
@@ -90,10 +93,9 @@ teaching session. Use a CPU runtime; no Docker or GPU is needed.
   comments, categories and Boolean labels are excluded. The LLM never sees Jev's answer.
 - **Jev primitive:** `choice`, not `score`. The returned `TRUE`/`FALSE` label is used directly.
   Confidence and the winning-option probability are distinct quantities.
-- **Split:** deterministic, label-stratified, query-grouped calibration/held-out sets.
-  Only calibration labels select the threshold. The objective is TRUE-class F1, then
-  accuracy, then fewer LLM calls, with lower threshold as the final tie-breaker.
-- **Gate:** confidence at or above the threshold keeps Jev; otherwise the LLM judges the
+- **Examples:** all three approaches use the same 300 rows. Human labels are used for
+  measuring agreement, not choosing a confidence cutoff.
+- **Gate:** a fixed Jev confidence of **0.7** or above keeps Jev; otherwise the LLM judges the
   same trace independently. Invalid Jev outputs also escalate. Failed LLM outputs remain
   unresolved and count against accuracy; they are never silently accepted.
 - **Metrics:** accuracy, TRUE precision/recall/F1, confusion counts, unresolved cases,
@@ -105,7 +107,7 @@ teaching session. Use a CPU runtime; no Docker or GPU is needed.
   OpenAI model, standard-tier estimates use $0.40/M input, $0.10/M cached input and
   $1.60/M output tokens, using returned cache counts. Cascade cost includes Jev on every
   row plus only escalated LLM calls. The full
-  benchmark additionally pays for calibration and the independent LLM comparison.
+  comparison additionally obtains LLM answers for every example.
 - **Mechanism:** compare high/low-confidence subsets and LLM fixes versus regressions.
   A cascade only improves quality when the second judge fixes more errors than it adds
   on the escalated subset. High-confidence errors and correlated mistakes can defeat it.
@@ -128,12 +130,11 @@ For escalation fraction `r`, average per-case cost is approximately
 the LLM on every case. Quality is a separate question: the LLM must fix more errors than
 it introduces on the escalated subset to improve agreement over Jev alone.
 
-The run demonstrates the distinction: 161 accepted Jev judgments had 95.0% agreement,
-and avoiding those LLM calls reduced estimated cost by 69.0% versus LLM alone. But the
-LLM fixed 6 errors and introduced 18 among the 39 escalations. The policy increases
-failure recall over Jev alone while lowering agreement; it is a cost/recall tradeoff
-for this dataset. Confidence thresholds must be calibrated against the product's error
-costs, not treated as a guarantee of correctness.
+With the fixed 0.7 cutoff, the 241 accepted Jev judgments have 96.3% agreement.
+Avoiding those LLM calls reduces estimated cost by 68.8% versus LLM alone. But the LLM
+fixes 11 errors and introduces 24 among the 59 escalations. The policy finds ten additional
+Vague Utterance failures compared with Jev alone, while adding false alarms and lowering
+agreement. The fixed cutoff is a lesson setting, not a guarantee of correctness.
 
 ## Reference data: the supplied workshop spreadsheet
 
@@ -148,8 +149,8 @@ Google credentials. See [data provenance](routing_agent_evals/data/README.md).
 | `golden_dataset_with_predictions.csv` | Golden Dataset with predictions | 301 saved routing predictions |
 
 The two judge notebooks use only **LLM as a Judge Dataset** as their reference. All 300
-queries, predicted intents and human labels match the completed API experiment, so its
-results are unchanged. Refreshing from the spreadsheet corrects shifted supporting
+queries, predicted intents and human labels match the completed API experiment, so the
+recorded responses can be reused for the fixed-policy comparison. Refreshing from the spreadsheet corrects shifted supporting
 columns in the old judge CSV; `intent_match` now contains pass/fail values. That field
 answers whether the intent matched, not whether a failure was caused by vagueness.
 
@@ -179,8 +180,8 @@ credentials. To use a previously generated local run, set `JUDGE_EVIDENCE_DIR` t
 directory and select replay with `JUDGE_MODE=replay` / `JEV_MODE=replay` as applicable.
 The runner executes the selected notebooks top to bottom in fresh kernels, writes executed copies
 to `.runs/executed`, and fails on any cell error. All three notebooks were executed after
-refreshing the spreadsheet snapshots, using a verification copy of the completed API run
-outside the repository. No new API calls were needed: judge inputs and labels are unchanged.
+switching to the fixed confidence policy, using a verification copy of the completed API
+responses outside the repository. No new API calls were needed: judge inputs and labels are unchanged.
 
 ## Files
 
@@ -191,7 +192,7 @@ routing_agent_evals/
   llm_as_judge.ipynb          Jev / LLM / confidence-gated judge lesson
   judge_lab.py               Shared policy, API client, validation and metrics
   run_notebooks.py           Execute selected notebooks with clean kernels
-  data/                      Original CSV datasets
+  data/                      Source CSV snapshots and provenance
   prompts/                   Original router and judge policies
   images/                    Existing router diagrams
 ```
@@ -202,5 +203,4 @@ routing_agent_evals/
 - [Choice](https://docs.typesafe.ai/primitives/choice) and [confidence](https://docs.typesafe.ai/confidence)
 - [TypeSafe model versions and pricing](https://docs.typesafe.ai/models)
 - [OpenAI GPT-4.1-mini versions and pricing](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
-- [Clinic comparison notebook used as inspiration](https://colab.research.google.com/drive/1FtSQhtAx8rlkWlV7GA87kIcaHwHG_mL_)
 - [Evals workbook](https://docs.google.com/spreadsheets/d/1O4VwHehFm9ebc1-szXWSyOj7DI8tn5Jp7kLajBO5N_o/edit)

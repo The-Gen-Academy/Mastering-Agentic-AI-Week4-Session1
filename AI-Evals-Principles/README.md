@@ -22,20 +22,32 @@ Select the project's Python kernel and run these notebooks in order:
 3. `llm_as_judge.ipynb` — System 1 motivation, Jev Choice judgments, independent LLM judgments,
    calibration, confidence-based escalation, held-out accuracy and costs, and error analysis.
 
-**Live Jev run complete:** 300 valid responses from TypeSafe's `jev-1.13.0` are recorded.
-On 200 held-out traces, Jev agrees with 179 human labels (89.5%) but detects 0/13 positive
-vague-utterance failures. The always-FALSE baseline agrees with 187/200 (93.5%). Jev's
-all-300-request list-price cost estimate is $0.01665, calculated from returned token usage;
-TypeSafe did not report a billed USD amount. This result does not support deploying Jev
-alone for this failure-detection task. No prompt or threshold is tuned on these held-out results.
+**Live benchmark complete:** 300 valid TypeSafe Jev judgments and 300 valid independent
+OpenAI judgments are recorded. The threshold selected on 100 calibration traces is **0.70**.
+On the separate 200-trace held-out set, the cascade sends 39 traces (19.5%) to the LLM:
 
-**LLM/cascade benchmark pending:** a separately funded LLM credential is still required.
-No LLM improvement or cascade savings result is claimed. All notebooks also undergo
-offline integration tests with temporary synthetic transport fixtures; those fixtures
-test execution and never serve as benchmark evidence.
+| Judge | Human-label agreement | Failure recall | TRUE F1 | Estimated USD / 1,000 traces |
+| --- | ---: | ---: | ---: | ---: |
+| Always FALSE | 93.5% | 0/13 (0%) | 0.000 | 0 |
+| Jev alone | 89.5% | 0/13 (0%) | 0.000 | $0.05552 |
+| GPT-4.1-mini alone | 78.0% | 8/13 (61.5%) | 0.267 | $0.51179 |
+| Jev then LLM | 83.5% | 5/13 (38.5%) | 0.233 | $0.15863 |
 
-The router and Jev-only notebook default to **replay**, using real saved evidence. The comparison defaults to
-replay only when a recorded manifest exists, otherwise **live**. Replay reads responses
+The cascade costs an estimated **69.0% less than LLM alone** on these traces and has higher
+agreement, but misses three failures the LLM finds. Compared with Jev alone, it detects
+five additional failures while reducing agreement. On the 39 escalated traces, the LLM
+fixes six Jev errors and introduces 18, so escalation is not a universal quality improvement.
+The low-confidence subset is harder, but the LLM is not a better overall judge of that subset.
+
+The full experiment (all 600 requests, including calibration and the standalone comparisons)
+has an estimated list-price cost of **$0.16995**. Costs use returned token counts and frozen
+published rates, including observed OpenAI cache counts; they are not invoices or guaranteed
+production costs. There were no unresolved judgments. Prompts and threshold selection were
+not tuned on held-out labels. These results do not justify deployment without further rubric
+and label review. Temporary synthetic test fixtures never serve as benchmark evidence.
+
+All three notebooks default to **replay** with the supplied evidence. The comparison selects
+live mode only if no recorded manifest exists. Replay reads responses
 from `data/jev_judge_run/cache` or `JUDGE_EVIDENCE_DIR`; its assertions check the
 request, dataset, split, threshold and metrics against the recorded manifest. Replay makes
 no model API calls. Results go to ignored `.runs/`, preserving the original datasets.
@@ -43,7 +55,8 @@ no model API calls. Results go to ignored `.runs/`, preserving the original data
 For **live** mode, set the notebook's mode selector or export `ROUTER_MODE=live` /
 `JUDGE_MODE=live`; use `JEV_MODE=live` for the Jev-only lesson. The router needs
 `OPENAI_API_KEY`. Jev uses **`TYPESAFE_API_KEY`** directly by default. The independent LLM
-uses `OPENROUTER_API_KEY`; set `LLM_PROVIDER=openai` to use `OPENAI_API_KEY` instead.
+uses **`OPENAI_API_KEY`** directly by default; set `LLM_PROVIDER=openrouter` to use
+`OPENROUTER_API_KEY` instead.
 Set `JEV_PROVIDER=openrouter` in the comparison if you prefer to call both stages through
 OpenRouter. Credentials are scoped to each stage and never sent to the other provider.
 Use environment variables, an ignored `.env` inside `routing_agent_evals`, Colab Secrets,
@@ -53,8 +66,8 @@ endpoint and exact request hash; use a new `JUDGE_RUN_DIR` (or `JEV_RUN_DIR` for
 for an independent rerun. A completed live notebook writes a manifest alongside its cache;
 set `JUDGE_MODE=replay` and `JUDGE_EVIDENCE_DIR` to that directory to replay it.
 
-The comparison uses `jev-1.13.0` directly (or `typesafe/jev-1.13` on OpenRouter) and
-`openai/gpt-4.1-mini` (`gpt-4.1-mini-2025-04-14` on direct OpenAI), following the supplied
+The recorded comparison uses `jev-1.13.0` directly and `gpt-4.1-mini-2025-04-14` directly,
+following the model families in the supplied
 [clinic notebook](https://colab.research.google.com/drive/1FtSQhtAx8rlkWlV7GA87kIcaHwHG_mL_).
 These identifiers are frozen for reproducibility, not claims about the newest models.
 
@@ -123,8 +136,8 @@ uv run python routing_agent_evals/run_notebooks.py --jev-only
 uv run python routing_agent_evals/run_notebooks.py
 ```
 
-`--jev-only` runs the router and Jev notebook without API access using the committed evidence.
-A funded LLM credential or complete recorded comparison is required for the full runner.
+Both commands run without API credentials using the committed evidence. `--jev-only`
+runs just the router and Jev notebook. Fresh live runs require funded provider credentials.
 The runner executes the selected notebooks top to bottom in fresh kernels, writes executed copies
 to `.runs/executed`, and fails on any cell error. Tests cover request leakage, malformed
 outputs, threshold boundaries, query-grouped splits, calibration isolation, unresolved
@@ -140,7 +153,7 @@ routing_agent_evals/
   judge_lab.py               Shared policy, API client, validation and metrics
   run_notebooks.py           Execute selected notebooks with clean kernels
   tests/                     Offline correctness and replay tests
-  data/                      Original CSVs; 300 recorded Jev responses and manifest
+  data/                      Original CSVs; 600 recorded judge responses and manifests
   prompts/                   Original router and judge policies
   images/                    Existing router diagrams
 ```

@@ -181,7 +181,7 @@ def test_direct_typesafe_estimate_uses_usage_and_frozen_rate(tmp_path):
 
 def test_credentials_are_scoped_to_stage_and_never_cached(tmp_path):
     client = JudgeClient(tmp_path, live=True,
-                         api_keys={"jev": "test-typesafe-secret", "llm": "test-router-secret"})
+                         api_keys={"jev": "test-typesafe-secret", "llm": "test-openai-secret"})
     calls = []
     def send(req, **kwargs):
         calls.append((req.full_url, req.headers["Authorization"]))
@@ -193,7 +193,7 @@ def test_credentials_are_scoped_to_stage_and_never_cached(tmp_path):
         client.call(row(), "jev")
         client.call(row(), "llm")
     assert calls == [(ENDPOINTS["jev"], "Bearer test-typesafe-secret"),
-                     (ENDPOINTS["llm"], "Bearer test-router-secret")]
+                     (ENDPOINTS["llm"], "Bearer test-openai-secret")]
     assert "secret" not in json.dumps(client.configuration())
     assert all("secret" not in p.read_text() for p in tmp_path.glob("*.json"))
 

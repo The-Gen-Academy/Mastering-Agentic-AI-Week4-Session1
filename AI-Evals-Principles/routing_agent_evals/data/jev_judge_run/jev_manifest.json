@@ -1,5 +1,5 @@
 {
-  "status": "Jev stage complete; LLM and cascade pending separate funded credential",
+  "status": "Jev stage complete; full LLM/cascade evidence is in manifest.json",
   "dataset_hash": "c5f9c5d5989767cd69b2d39ba7651457f670792bbfc9097bed62069170e4a8f1",
   "policy_hash": "7948247737a203e3b4ede08b357bc569eeef748fb3c00101b761c0d7f6490cc7",
   "providers": {

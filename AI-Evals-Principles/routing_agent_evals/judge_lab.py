@@ -20,15 +20,15 @@ from pathlib import Path
 from prompts.llm_as_judge_prompt import VAGUE_UTTERANCES_FAILURE_PROMPT
 
 JEV_MODEL = "jev-1.13.0"
-LLM_MODEL = "openai/gpt-4.1-mini"
+LLM_MODEL = "gpt-4.1-mini-2025-04-14"
 ENDPOINTS = {"jev": "https://api.typesafe.ai/v1/systemone",
-             "llm": "https://openrouter.ai/api/v1/chat/completions"}
-DEFAULT_PROVIDERS = {"jev": "typesafe", "llm": "openrouter"}
+             "llm": "https://api.openai.com/v1/chat/completions"}
+DEFAULT_PROVIDERS = {"jev": "typesafe", "llm": "openai"}
 PROVIDER_CONFIG = {
     ("jev", "typesafe"): (ENDPOINTS["jev"], JEV_MODEL, "TYPESAFE_API_KEY"),
     ("jev", "openrouter"): ("https://openrouter.ai/api/v1/systemone", "typesafe/jev-1.13", "OPENROUTER_API_KEY"),
-    ("llm", "openrouter"): (ENDPOINTS["llm"], LLM_MODEL, "OPENROUTER_API_KEY"),
-    ("llm", "openai"): ("https://api.openai.com/v1/chat/completions", "gpt-4.1-mini-2025-04-14", "OPENAI_API_KEY"),
+    ("llm", "openrouter"): ("https://openrouter.ai/api/v1/chat/completions", "openai/gpt-4.1-mini", "OPENROUTER_API_KEY"),
+    ("llm", "openai"): (ENDPOINTS["llm"], LLM_MODEL, "OPENAI_API_KEY"),
 }
 # Frozen list-price estimate, not a reported charge. Unknown models stay unknown.
 DEFAULT_PRICING = {"jev": {"provider": "typesafe", "model": "jev-1.13.0",

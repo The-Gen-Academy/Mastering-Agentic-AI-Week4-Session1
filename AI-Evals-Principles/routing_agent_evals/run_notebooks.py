@@ -1,4 +1,4 @@
-"""Execute lessons in fresh kernels; --jev-only needs no LLM credential."""
+"""Execute lessons in fresh kernels with API credentials or a local replay directory."""
 import argparse
 from pathlib import Path
 
@@ -8,7 +8,7 @@ from nbclient import NotebookClient
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--jev-only", action="store_true", help="Run router and recorded Jev lesson only")
+    parser.add_argument("--jev-only", action="store_true", help="Run router and Jev lesson only; no LLM credential needed")
     args = parser.parse_args()
     lab = Path(__file__).resolve().parent
     output = lab / ".runs/executed"

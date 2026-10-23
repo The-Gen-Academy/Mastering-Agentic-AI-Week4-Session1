@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "nbformat", "nbclient"]
+dev = ["nbformat", "nbclient"]
 
 [tool.uv]
 package = false

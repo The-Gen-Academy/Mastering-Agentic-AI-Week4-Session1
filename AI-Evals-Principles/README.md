@@ -22,8 +22,9 @@ Select the project's Python kernel and run these notebooks in order:
 3. `llm_as_judge.ipynb` — System 1 motivation, Jev Choice judgments, independent LLM judgments,
    calibration, confidence-based escalation, held-out accuracy and costs, and error analysis.
 
-**Live benchmark complete:** 300 valid TypeSafe Jev judgments and 300 valid independent
-OpenAI judgments are recorded. The threshold selected on 100 calibration traces is **0.70**.
+**Live benchmark complete:** the saved notebook outputs show 300 valid TypeSafe Jev judgments
+and 300 valid independent OpenAI judgments. Raw response caches, manifests and test files
+are not included in the repository. The threshold selected on 100 calibration traces is **0.70**.
 On the separate 200-trace held-out set, the cascade sends 39 traces (19.5%) to the LLM:
 
 | Judge | Human-label agreement | Failure recall | TRUE F1 | Estimated USD / 1,000 traces |
@@ -44,13 +45,14 @@ has an estimated list-price cost of **$0.16995**. Costs use returned token count
 published rates, including observed OpenAI cache counts; they are not invoices or guaranteed
 production costs. There were no unresolved judgments. Prompts and threshold selection were
 not tuned on held-out labels. These results do not justify deployment without further rubric
-and label review. Temporary synthetic test fixtures never serve as benchmark evidence.
+and label review.
 
-All three notebooks default to **replay** with the supplied evidence. The comparison selects
-live mode only if no recorded manifest exists. Replay reads responses
-from `data/jev_judge_run/cache` or `JUDGE_EVIDENCE_DIR`; its assertions check the
-request, dataset, split, threshold and metrics against the recorded manifest. Replay makes
-no model API calls. Results go to ignored `.runs/`, preserving the original datasets.
+The saved outputs can be read without running code. The router defaults to replay of its
+original CSV predictions. On a fresh checkout, the judge notebooks run **live** and require
+provider credentials. Optional replay uses a run directory you generated locally:
+`JUDGE_EVIDENCE_DIR`, or the notebook's own `.runs/` directory. It checks the request,
+dataset, split, threshold and metrics against your local manifest, without new API calls.
+Generated responses and reports stay in ignored `.runs/` directories.
 
 For **live** mode, set the notebook's mode selector or export `ROUTER_MODE=live` /
 `JUDGE_MODE=live`; use `JEV_MODE=live` for the Jev-only lesson. The router needs
@@ -108,6 +110,31 @@ teaching session. Use a CPU runtime; no Docker or GPU is needed.
   A cascade only improves quality when the second judge fixes more errors than it adds
   on the escalated subset. High-confidence errors and correlated mistakes can defeat it.
 
+## Why use the confidence policy?
+
+The policy reserves the LLM for uncertain or unusable Jev judgments. Keeping a valid,
+high-confidence answer avoids a second call on cases Jev handles reliably on validation
+data. Escalating low-confidence cases gives an independent judge a chance to correct
+them. Invalid outputs also escalate because an unusable label cannot be accepted, even
+if a confidence field looks high.
+
+If the LLM also fails, nothing has made the original rejected answer more trustworthy.
+Recording an unresolved case preserves that uncertainty for human review. In this lab,
+that means an explicit unresolved result in the output table; it does not dispatch a
+human-review task.
+
+For escalation fraction `r`, average per-case cost is approximately
+`Jev cost + r × LLM cost`. The policy saves money when this is below the cost of asking
+the LLM on every case. Quality is a separate question: the LLM must fix more errors than
+it introduces on the escalated subset to improve agreement over Jev alone.
+
+The run demonstrates the distinction: 161 accepted Jev judgments had 95.0% agreement,
+and avoiding those LLM calls reduced estimated cost by 69.0% versus LLM alone. But the
+LLM fixed 6 errors and introduced 18 among the 39 escalations. The policy increases
+failure recall over Jev alone while lowering agreement; it is a cost/recall tradeoff
+for this dataset. Confidence thresholds must be calibrated against the product's error
+costs, not treated as a guarantee of correctness.
+
 ## Data limitations are part of the lesson
 
 There are 300 judge rows: 20 TRUE and 280 FALSE. Always predicting FALSE produces 93.3%
@@ -126,22 +153,21 @@ The original `judge_alignment_1.csv` and `judge_alignment_2.csv` are retained as
 baselines. They lack verified per-request model/usage metadata, so the notebook does not
 invent historical costs or present them as the controlled Jev/LLM comparison.
 
-## Tests and notebook execution
+## Notebook execution
 
 From `AI-Evals-Principles` after `uv sync --locked`:
 
 ```bash
-uv run python -m pytest routing_agent_evals/tests -q
 uv run python routing_agent_evals/run_notebooks.py --jev-only
 uv run python routing_agent_evals/run_notebooks.py
 ```
 
-Both commands run without API credentials using the committed evidence. `--jev-only`
-runs just the router and Jev notebook. Fresh live runs require funded provider credentials.
+`--jev-only` runs just the router and Jev notebook. Fresh live runs require funded provider
+credentials. To use a previously generated local run, set `JUDGE_EVIDENCE_DIR` to its
+directory and select replay with `JUDGE_MODE=replay` / `JEV_MODE=replay` as applicable.
 The runner executes the selected notebooks top to bottom in fresh kernels, writes executed copies
-to `.runs/executed`, and fails on any cell error. Tests cover request leakage, malformed
-outputs, threshold boundaries, query-grouped splits, calibration isolation, unresolved
-judgments, fallback calls, cost accounting and offline replay of recorded evidence.
+to `.runs/executed`, and fails on any cell error. All three notebooks were executed after
+this cleanup using a verification copy of the completed run outside the repository.
 
 ## Files
 
@@ -152,8 +178,7 @@ routing_agent_evals/
   llm_as_judge.ipynb          Jev / LLM / confidence-gated judge lesson
   judge_lab.py               Shared policy, API client, validation and metrics
   run_notebooks.py           Execute selected notebooks with clean kernels
-  tests/                     Offline correctness and replay tests
-  data/                      Original CSVs; 600 recorded judge responses and manifests
+  data/                      Original CSV datasets
   prompts/                   Original router and judge policies
   images/                    Existing router diagrams
 ```

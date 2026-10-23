@@ -36,7 +36,7 @@ TEST_034,Free up this weekend,UPDATE_SPECIAL_SLOTS
 TEST_035,I need to clear Sunday's block,UNBLOCK_SLOTS
 TEST_036,Im free again,UNBLOCK_SLOTS
 TEST_037,Im free,UNBLOCK_SLOTS
-TEST_038," open up my mornings for next week",UPDATE_SPECIAL_SLOTS
+TEST_038, open up my mornings for next week,UPDATE_SPECIAL_SLOTS
 TEST_039,Make November 13th available again,UNBLOCK_SLOTS
 TEST_040,I can work this monday again,UNBLOCK_SLOTS
 TEST_041,Add extra hours for upcoming Tuesday,UPDATE_SPECIAL_SLOTS
@@ -66,7 +66,7 @@ TEST_064,Move my next appointment to 3pm.,UNSUPPORTED_REQUEST
 TEST_065,Reschedule Evan for sometime next week.,UNSUPPORTED_REQUEST
 TEST_066,Book a new patient for tomorrow at 10.,UNSUPPORTED_REQUEST
 TEST_067,Add a follow-up for Mr. Okui,UNSUPPORTED_REQUEST
-TEST_068,Lighten my schedule for tomorrow.,UNSUPPORTED_REQUEST
+TEST_068,Lighten my schedule for tomorrow.,BLOCK_SLOTS
 TEST_069,How many patients did I see last Tuesday?,UNSUPPORTED_REQUEST
 TEST_070,Who is my 2pm appointment?,UNSUPPORTED_REQUEST
 TEST_071,Can you send a reminder to my 3pm?,UNSUPPORTED_REQUEST
@@ -96,7 +96,7 @@ TEST_094,Block out this hour,BLOCK_SLOTS
 TEST_095,Cancel my 3 PM slot,CANCEL_APPOINTMENTS
 TEST_096,Block my 3pm patient,BLOCK_SLOTS
 TEST_097,I'm free from 2-4pm again,UNBLOCK_SLOTS
-TEST_098,I'm available on Fridays again,UNBLOCK_SLOTS
+TEST_098,I'm available on Fridays again,UPDATE_SPECIAL_SLOTS
 TEST_099,"Unblock me, and show me my schedule",UNBLOCK_SLOTS
 TEST_100,I want to add some hours to my schedule,UPDATE_SPECIAL_SLOTS
 TEST_101,I'm no longer working on Fridays,UPDATE_SPECIAL_SLOTS
@@ -104,7 +104,7 @@ TEST_102,I want to start my day at 10 AM instead of 9 from now on,UPDATE_SPECIAL
 TEST_103,I want to add an hour to my day,UPDATE_SPECIAL_SLOTS
 TEST_104,Block my calendar this Friday,BLOCK_SLOTS
 TEST_105,I'm free on Friday,UNBLOCK_SLOTS
-TEST_106,I need more breaks,UNSUPPORTED_REQUEST
+TEST_106,I need more breaks,BLOCK_SLOTS
 TEST_107,My 4 PM appointment needs to be pushed,RESCHEDULE_APPOINTMENTS
 TEST_108,Cancel my last appointment of the day,CANCEL_APPOINTMENTS
 TEST_109,What's my next appointment?,UNSUPPORTED_REQUEST

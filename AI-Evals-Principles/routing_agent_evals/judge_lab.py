@@ -40,6 +40,13 @@ DEFAULT_PRICING = {"jev": {"provider": "typesafe", "model": "jev-1.13.0",
     "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
     "checked_on": "2026-10-22"}}
 LABELS = ("TRUE", "FALSE")
+JUDGE_DATA_SOURCE = {
+    "spreadsheet": "AI Evals - Workshop",
+    "url": "https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit#gid=556727646",
+    "tab": "LLM as a Judge Dataset",
+    "snapshot_date": "2026-10-23",
+    "label_column": "Vague_Utterance_Failure",
+}
 THRESHOLDS = (0.0, 0.25, 0.5, 0.7, 0.85, 0.95, 1.0)
 # Reuse the original task definition and intent rules, without its legacy
 # output-format instruction or embedded input placeholders.
@@ -71,29 +78,20 @@ def save_json(path, value):
 
 
 def load_dataset(data_dir):
-    """Preserve the judge CSV's human labels; flag, never silently repair them."""
+    """Load judge inputs and explicit human labels from the designated Sheet tab.
+
+    The CSV is a frozen snapshot of 'LLM as a Judge Dataset'. Other tabs and
+    columns (including TARGET_INTENT and intent_match) do not define this label.
+    """
     data_dir = Path(data_dir)
     raw = read_csv(data_dir / "llm_as_judge_dataset.csv")
-    golden = {r["TEST_ID"]: r for r in read_csv(data_dir / "golden_dataset.csv")}
     rows = []
     for row in raw:
         label = row["Vague_Utterance_Failure"].strip().upper()
         if label not in LABELS or not row["USER_INPUT"].strip() or not row["final_intent"].strip():
             raise ValueError(f"Invalid judge reference: {row['TEST_ID']}")
-        other = golden.get(row["TEST_ID"])
-        issues = []
-        if other is None:
-            issues.append("missing_golden_id")
-        else:
-            if row["TARGET_INTENT"] != other["TARGET_INTENT"]:
-                issues.append("target_differs_between_csvs")
-            if row["USER_INPUT"].strip() != other["USER_INPUT"].strip():
-                issues.append("query_differs_between_csvs")
-        if row["intent_match"].strip().lower() not in {"pass", "fail"}:
-            issues.append("legacy_intent_match_contains_prose")
         rows.append({"id": row["TEST_ID"], "user_query": row["USER_INPUT"],
-                     "predicted_intent": row["final_intent"], "human_label": label,
-                     "reference_issues": issues})
+                     "predicted_intent": row["final_intent"], "human_label": label})
     if len({r["id"] for r in rows}) != len(rows):
         raise ValueError("Duplicate test IDs")
     return rows

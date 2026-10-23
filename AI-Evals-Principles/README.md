@@ -135,19 +135,35 @@ failure recall over Jev alone while lowering agreement; it is a cost/recall trad
 for this dataset. Confidence thresholds must be calibrated against the product's error
 costs, not treated as a guarantee of correctness.
 
-## Data limitations are part of the lesson
+## Reference data: the supplied workshop spreadsheet
 
-There are 300 judge rows: 20 TRUE and 280 FALSE. Always predicting FALSE produces 93.3%
-full-dataset agreement while detecting no failures. The audit also reports 10 target-label
-differences between the judge and golden CSVs, one query difference, and 248 legacy
-`intent_match` cells containing prose. Those fields are not used as judge answers. Human
-judge labels are preserved; inspect disagreements before treating them as unquestionable.
-The notebook includes a sensitivity comparison excluding cross-file reference conflicts.
+The authoritative source is **[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit)**. The three local CSVs
+are snapshots of its tabs read on **2026-10-23**, so the notebooks run reproducibly without
+Google credentials. See [data provenance](routing_agent_evals/data/README.md).
 
-The router's 301 saved predictions contain two target labels that differ from the canonical
-`golden_dataset.csv`; Notebook 1 matches IDs and text, then recomputes routing metrics
-against that canonical file. New router outputs require fresh human judge labels before
-being included in the frozen judge agreement benchmark.
+| Local CSV | Spreadsheet tab | Used for |
+| --- | --- | --- |
+| `golden_dataset.csv` | Golden Dataset Full | 301 routing queries and target intents |
+| `llm_as_judge_dataset.csv` | LLM as a Judge Dataset | 300 judge traces and explicit `Vague_Utterance_Failure` labels |
+| `golden_dataset_with_predictions.csv` | Golden Dataset with predictions | 301 saved routing predictions |
+
+The two judge notebooks use only **LLM as a Judge Dataset** as their reference. All 300
+queries, predicted intents and human labels match the completed API experiment, so its
+results are unchanged. Refreshing from the spreadsheet corrects shifted supporting
+columns in the old judge CSV; `intent_match` now contains pass/fail values. That field
+answers whether the intent matched, not whether a failure was caused by vagueness.
+
+There are 20 TRUE and 280 FALSE judge labels. Always predicting FALSE produces 93.3%
+full-dataset agreement while detecting no failures. “Agreement” means matching the
+supplied human label; it is not a claim that every human label is beyond dispute. Neither
+judge's ground truth is inferred from another tab or from `intent_match`.
+
+For routing, the two relevant spreadsheet tabs differ on 13 target labels and on the
+query text for `TEST_227`. Notebook 1 displays those differences, uses **Golden Dataset
+Full** targets, and evaluates only the 300 saved predictions whose IDs and trimmed query
+text match. It explicitly excludes the mismatched trace; live mode runs all 301 golden
+queries. Those routing-tab differences do not filter the judge dataset. New router
+predictions require new human judge labels before joining the judge benchmark.
 
 The original `judge_alignment_1.csv` and `judge_alignment_2.csv` are retained as historical
 baselines. They lack verified per-request model/usage metadata, so the notebook does not
@@ -167,7 +183,8 @@ credentials. To use a previously generated local run, set `JUDGE_EVIDENCE_DIR` t
 directory and select replay with `JUDGE_MODE=replay` / `JEV_MODE=replay` as applicable.
 The runner executes the selected notebooks top to bottom in fresh kernels, writes executed copies
 to `.runs/executed`, and fails on any cell error. All three notebooks were executed after
-this cleanup using a verification copy of the completed run outside the repository.
+refreshing the spreadsheet snapshots, using a verification copy of the completed API run
+outside the repository. No new API calls were needed: judge inputs and labels are unchanged.
 
 ## Files
 

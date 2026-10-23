@@ -24,8 +24,6 @@ in the prediction/judge tabs. Router replay excludes that one trace from its 301
 reference and evaluates the other 300; the judge experiment keeps its own tab's trace
 and human label. No label or prediction is silently transferred to a different query.
 
-`judge_alignment_1.csv` and `judge_alignment_2.csv` are retained historical model outputs,
-not replacement reference labels. The comparison checks their IDs, queries, candidate
-intents and labels against the designated judge dataset before reporting an optional
-historical baseline. Their model usage and costs are unknown. `golden_dataset_small_5.csv`
-is a legacy example subset and is not used by the three evaluation notebooks.
+`judge_alignment_1.csv`, `judge_alignment_2.csv`, and `golden_dataset_small_5.csv` are
+legacy files retained from the original repository. They are not used by the three
+evaluation notebooks.

@@ -165,10 +165,6 @@ text match. It explicitly excludes the mismatched trace; live mode runs all 301 
 queries. Those routing-tab differences do not filter the judge dataset. New router
 predictions require new human judge labels before joining the judge benchmark.
 
-The original `judge_alignment_1.csv` and `judge_alignment_2.csv` are retained as historical
-baselines. They lack verified per-request model/usage metadata, so the notebook does not
-invent historical costs or present them as the controlled Jev/LLM comparison.
-
 ## Notebook execution
 
 From `AI-Evals-Principles` after `uv sync --locked`:

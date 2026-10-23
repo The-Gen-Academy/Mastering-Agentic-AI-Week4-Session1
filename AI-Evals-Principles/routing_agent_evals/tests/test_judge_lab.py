@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
+from io import BytesIO
 
 import pytest
 
@@ -164,6 +165,83 @@ def test_source_audit_preserves_explicit_judge_references():
     assert sum("legacy_intent_match_contains_prose" in r["reference_issues"] for r in rows) == 248
 
 
+def test_direct_typesafe_estimate_uses_usage_and_frozen_rate(tmp_path):
+    client = JudgeClient(tmp_path)
+    raw = raw_jev()
+    raw["usage"] = {"input_tokens": 1_000_000, "output_tokens": 33}
+    attempt = {"response": raw}
+    assert client.attempt_cost(attempt, "jev") == (0.042, "estimated")
+    raw["usage"]["cost"] = 0.035
+    assert client.attempt_cost(attempt, "jev") == (0.035, "reported")
+    del raw["usage"]["cost"]
+    raw["model"] = "unknown-model"
+    assert client.attempt_cost(attempt, "jev") == (None, "unknown")
+    assert client.attempt_cost({"error": "HTTP 500"}, "jev") == (None, "unknown")
+
+
+def test_credentials_are_scoped_to_stage_and_never_cached(tmp_path):
+    client = JudgeClient(tmp_path, live=True,
+                         api_keys={"jev": "test-typesafe-secret", "llm": "test-router-secret"})
+    calls = []
+    def send(req, **kwargs):
+        calls.append((req.full_url, req.headers["Authorization"]))
+        raw = raw_jev() if "typesafe.ai" in req.full_url else {
+            "choices": [{"finish_reason": "stop", "message": {
+                "content": '{"label":"TRUE","reason":"test"}'}}]}
+        return BytesIO(json.dumps(raw).encode())
+    with patch("urllib.request.urlopen", side_effect=send):
+        client.call(row(), "jev")
+        client.call(row(), "llm")
+    assert calls == [(ENDPOINTS["jev"], "Bearer test-typesafe-secret"),
+                     (ENDPOINTS["llm"], "Bearer test-router-secret")]
+    assert "secret" not in json.dumps(client.configuration())
+    assert all("secret" not in p.read_text() for p in tmp_path.glob("*.json"))
+
+
+def test_openai_cost_estimate_counts_cached_tokens_at_cached_price(tmp_path):
+    client = JudgeClient(tmp_path, providers={"jev": "typesafe", "llm": "openai"})
+    raw = {"model": "gpt-4.1-mini-2025-04-14", "service_tier": "default",
+           "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 100_000,
+                     "prompt_tokens_details": {"cached_tokens": 250_000}}}
+    cost, source = client.attempt_cost({"response": raw}, "llm")
+    assert cost == pytest.approx(0.485) and source == "estimated"
+    raw["usage"]["prompt_tokens_details"]["cached_tokens"] = 1_000_001
+    assert client.attempt_cost({"response": raw}, "llm") == (None, "unknown")
+    raw["usage"]["prompt_tokens_details"] = {}
+    assert client.attempt_cost({"response": raw}, "llm") == (None, "unknown")
+    raw["usage"]["prompt_tokens_details"]["cached_tokens"] = 0
+    raw["service_tier"] = "priority"
+    assert client.attempt_cost({"response": raw}, "llm") == (None, "unknown")
+
+
+def test_provider_changes_cannot_reuse_another_endpoint_cache(tmp_path):
+    first = JudgeClient(tmp_path, live=True, api_keys={"jev": "test-secret"})
+    with patch("urllib.request.urlopen", return_value=BytesIO(json.dumps(raw_jev()).encode())):
+        first.call(row(), "jev")
+    second = JudgeClient(tmp_path, providers={"jev": "openrouter", "llm": "openrouter"})
+    with patch("urllib.request.urlopen", side_effect=AssertionError("network forbidden")):
+        with pytest.raises(FileNotFoundError):
+            second.call(row(), "jev")
+
+
+def test_saved_jev_stage_replays_without_network():
+    manifest_path = LAB / "data/jev_judge_run/jev_manifest.json"
+    if not manifest_path.exists():
+        pytest.skip("Direct TypeSafe evidence has not been captured yet")
+    manifest = json.loads(manifest_path.read_text())
+    rows = load_dataset(LAB / "data")
+    calibration, heldout = split_dataset(rows)
+    assert digest(rows) == manifest["dataset_hash"]
+    client = JudgeClient(manifest_path.parent / "cache", providers=manifest["providers"],
+                         models=manifest["models"], pricing=manifest["pricing"])
+    with patch("urllib.request.urlopen", side_effect=AssertionError("network forbidden")):
+        jev = {r["id"]: client.call(r, "jev") for r in rows}
+    assert all(r["error"] is None for r in jev.values())
+    assert metrics(calibration, jev, "Jev calibration") == manifest["calibration_metrics"]
+    assert metrics(heldout, jev, "Jev held out") == manifest["heldout_metrics"]
+    assert client.new_requests == 0
+
+
 def test_saved_run_replays_with_frozen_split_and_expected_metrics():
     manifest_path = LAB / "data/jev_judge_run/manifest.json"
     if not manifest_path.exists():
@@ -173,7 +251,8 @@ def test_saved_run_replays_with_frozen_split_and_expected_metrics():
     calibration, heldout = split_dataset(rows)
     assert digest(rows) == manifest["dataset_hash"]
     assert [r["id"] for r in calibration] == manifest["calibration_ids"]
-    client = JudgeClient(manifest_path.parent / "cache")
+    client = JudgeClient(manifest_path.parent / "cache", providers=manifest.get("providers"),
+                         models=manifest.get("models"), pricing=manifest.get("pricing"))
     with patch("urllib.request.urlopen", side_effect=AssertionError("network forbidden")):
         jev = {r["id"]: client.call(r, "jev") for r in rows}
         llm = {r["id"]: client.call(r, "llm") for r in rows}

@@ -19,10 +19,26 @@ from pathlib import Path
 
 from prompts.llm_as_judge_prompt import VAGUE_UTTERANCES_FAILURE_PROMPT
 
-JEV_MODEL = "typesafe/jev-1.13"
+JEV_MODEL = "jev-1.13.0"
 LLM_MODEL = "openai/gpt-4.1-mini"
-ENDPOINTS = {"jev": "https://openrouter.ai/api/v1/systemone",
+ENDPOINTS = {"jev": "https://api.typesafe.ai/v1/systemone",
              "llm": "https://openrouter.ai/api/v1/chat/completions"}
+DEFAULT_PROVIDERS = {"jev": "typesafe", "llm": "openrouter"}
+PROVIDER_CONFIG = {
+    ("jev", "typesafe"): (ENDPOINTS["jev"], JEV_MODEL, "TYPESAFE_API_KEY"),
+    ("jev", "openrouter"): ("https://openrouter.ai/api/v1/systemone", "typesafe/jev-1.13", "OPENROUTER_API_KEY"),
+    ("llm", "openrouter"): (ENDPOINTS["llm"], LLM_MODEL, "OPENROUTER_API_KEY"),
+    ("llm", "openai"): ("https://api.openai.com/v1/chat/completions", "gpt-4.1-mini-2025-04-14", "OPENAI_API_KEY"),
+}
+# Frozen list-price estimate, not a reported charge. Unknown models stay unknown.
+DEFAULT_PRICING = {"jev": {"provider": "typesafe", "model": "jev-1.13.0",
+    "input_usd_per_million": 0.042, "output_usd_per_million": 0.0,
+    "source": "https://docs.typesafe.ai/models", "checked_on": "2026-10-22"},
+    "llm": {"provider": "openai", "model": "gpt-4.1-mini-2025-04-14",
+    "input_usd_per_million": 0.40, "cached_input_usd_per_million": 0.10,
+    "output_usd_per_million": 1.60,
+    "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+    "checked_on": "2026-10-22"}}
 LABELS = ("TRUE", "FALSE")
 THRESHOLDS = (0.0, 0.25, 0.5, 0.7, 0.85, 0.95, 1.0)
 # Reuse the original task definition and intent rules, without its legacy
@@ -166,36 +182,75 @@ class JudgeClient:
     Cache entries include every HTTP attempt, reported usage and elapsed time.
     Authorization headers are never written to disk or included in exceptions.
     """
-    def __init__(self, cache_dir, *, live=False, api_key=None, models=None):
+    def __init__(self, cache_dir, *, live=False, api_keys=None, providers=None,
+                 models=None, pricing=None):
         self.cache_dir = Path(cache_dir)
         self.live = live
-        self.api_key = api_key
-        self.models = models or {"jev": JEV_MODEL, "llm": LLM_MODEL}
+        self.api_keys = api_keys or {}
+        self.providers = dict(DEFAULT_PROVIDERS if providers is None else providers)
+        config = {stage: PROVIDER_CONFIG[(stage, self.providers[stage])] for stage in ("jev", "llm")}
+        self.endpoints = {stage: c[0] for stage, c in config.items()}
+        self.models = models or {stage: c[1] for stage, c in config.items()}
+        self.key_names = {stage: c[2] for stage, c in config.items()}
+        self.pricing = DEFAULT_PRICING if pricing is None else pricing
         self.new_requests = 0
         self.cache_hits = 0
 
+    def configuration(self):
+        """Public experiment metadata; never include API keys."""
+        return {"providers": self.providers, "models": self.models, "pricing": self.pricing}
+
+    def attempt_cost(self, attempt, stage):
+        raw = attempt.get("response", {})
+        usage = raw.get("usage", {})
+        cost = usage.get("cost")
+        if finite_number(cost, high=float("inf")):
+            return cost, "reported"
+        price = self.pricing.get(stage, {})
+        if self.providers[stage] == "openai" and raw.get("service_tier") not in {None, "default"}:
+            return None, "unknown"
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+        if (price.get("provider") == self.providers[stage]
+                and price.get("model") == self.models[stage] == raw.get("model")
+                and finite_number(input_tokens, high=float("inf"))
+                and finite_number(output_tokens, high=float("inf"))):
+            cached = 0
+            if "cached_input_usd_per_million" in price:
+                cached = usage.get("prompt_tokens_details", {}).get("cached_tokens")
+                if not finite_number(cached, high=input_tokens):
+                    return None, "unknown"
+            cost = ((input_tokens - cached) * price["input_usd_per_million"]
+                    + cached * price.get("cached_input_usd_per_million", 0)
+                    + output_tokens * price["output_usd_per_million"]) / 1_000_000
+            return cost, "estimated"
+        return None, "unknown"
+
     def call(self, row, stage):
         request = request_for(row, stage, self.models[stage])
-        request_hash = digest({"endpoint": ENDPOINTS[stage], "request": request})
+        request_hash = digest({"endpoint": self.endpoints[stage], "request": request})
         path = self.cache_dir / f"{stage}-{request_hash}.json"
         if path.exists():
             entry = json.loads(path.read_text())
-            if entry["request"] != request or entry["endpoint"] != ENDPOINTS[stage]:
+            if entry["request"] != request or entry["endpoint"] != self.endpoints[stage]:
                 raise ValueError("Cache request mismatch")
             self.cache_hits += 1
         elif not self.live:
             raise FileNotFoundError(f"No recorded {stage} response for {row['id']}; use live mode for changed prompts/models.")
         else:
-            if not self.api_key:
-                raise RuntimeError("Live mode requires OPENROUTER_API_KEY")
+            if not self.api_keys.get(stage):
+                raise RuntimeError(f"Live {stage} requires {self.key_names[stage]}")
             entry = self._send(stage, request)
             save_json(path, entry)
         attempts = entry["attempts"]
-        costs = [a.get("response", {}).get("usage", {}).get("cost") for a in attempts]
-        costs = [c if finite_number(c, high=float("inf")) else None for c in costs]
+        costs = [self.attempt_cost(a, stage) for a in attempts]
         result = {"id": row["id"], "stage": stage, "request_hash": request_hash,
-                  "cost_usd": sum(c for c in costs if c is not None),
-                  "unreported_cost_attempts": sum(c is None for c in costs),
+                  "cost_usd": sum(c for c, source in costs if c is not None),
+                  "reported_cost_usd": sum(c for c, source in costs if source == "reported"),
+                  "estimated_cost_usd": sum(c for c, source in costs if source == "estimated"),
+                  "estimated_cost_attempts": sum(source == "estimated" for c, source in costs),
+                  "unknown_cost_attempts": sum(source == "unknown" for c, source in costs),
+                  "unreported_cost_attempts": sum(source != "reported" for c, source in costs),
                   "attempts": len(attempts), "elapsed_seconds": sum(a["elapsed_seconds"] for a in attempts),
                   "input_tokens": sum(a.get("response", {}).get("usage", {}).get("prompt_tokens",
                                       a.get("response", {}).get("usage", {}).get("input_tokens", 0)) for a in attempts),
@@ -216,8 +271,8 @@ class JudgeClient:
     def _send(self, stage, request):
         attempts = []
         for attempt in range(3):
-            req = urllib.request.Request(ENDPOINTS[stage], method="POST",
-                  data=json.dumps(request).encode(), headers={"Authorization": "Bearer " + self.api_key,
+            req = urllib.request.Request(self.endpoints[stage], method="POST",
+                  data=json.dumps(request).encode(), headers={"Authorization": "Bearer " + self.api_keys[stage],
                                                             "Content-Type": "application/json"})
             started = time.monotonic()
             self.new_requests += 1
@@ -232,7 +287,7 @@ class JudgeClient:
                     attempts.append({"response": raw, "elapsed_seconds": time.monotonic() - started})
             except urllib.error.HTTPError as exc:
                 if exc.code in {401, 402, 403}:
-                    raise RuntimeError(f"HTTP {exc.code}: check OpenRouter key, credits and model access.") from None
+                    raise RuntimeError(f"HTTP {exc.code}: check {self.providers[stage]} key, credits and model access.") from None
                 attempts.append({"error": f"HTTP {exc.code}", "elapsed_seconds": time.monotonic() - started})
                 retry = exc.code == 429 or exc.code >= 500
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
@@ -241,7 +296,7 @@ class JudgeClient:
             if not retry or attempt == 2:
                 break
             time.sleep(2 ** attempt)
-        return {"endpoint": ENDPOINTS[stage], "request": request, "attempts": attempts,
+        return {"endpoint": self.endpoints[stage], "request": request, "attempts": attempts,
                 "recorded_at": datetime.now(timezone.utc).isoformat()}
 
 
@@ -263,8 +318,9 @@ def combined(jev_result, llm_result=None):
     result = dict(selected, route="LLM" if llm_result is not None else "Jev")
     if llm_result is not None:
         for key in ("cost_usd", "unreported_cost_attempts", "attempts", "elapsed_seconds",
-                    "input_tokens", "output_tokens"):
-            result[key] = jev_result[key] + llm_result[key]
+                    "input_tokens", "output_tokens", "reported_cost_usd", "estimated_cost_usd",
+                    "estimated_cost_attempts", "unknown_cost_attempts"):
+            result[key] = jev_result.get(key, 0) + llm_result.get(key, 0)
     return result
 
 
@@ -300,6 +356,10 @@ def metrics(rows, predictions, method):
             "TN": tn, "FP": fp, "FN_including_unresolved": fn, "TP": tp,
             "unresolved": sum(p not in LABELS for p in guesses),
             "cost_usd": sum(r.get("cost_usd", 0) for r in results),
+            "reported_cost_usd": sum(r.get("reported_cost_usd", 0) for r in results),
+            "estimated_cost_usd": sum(r.get("estimated_cost_usd", 0) for r in results),
+            "estimated_cost_attempts": sum(r.get("estimated_cost_attempts", 0) for r in results),
+            "unknown_cost_attempts": sum(r.get("unknown_cost_attempts", 0) for r in results),
             "unreported_cost_attempts": sum(r.get("unreported_cost_attempts", 0) for r in results),
             "llm_routes": sum(r.get("route") == "LLM" for r in results)}
 

@@ -22,7 +22,7 @@ from judge_lab import (JudgeClient, ENDPOINTS, POLICY, CRITERIA, digest, request
 @pytest.fixture(scope="module")
 def notebook_lab(tmp_path_factory):
     target = tmp_path_factory.mktemp("synthetic-notebook-integration")
-    for name in ("judge_lab.py", "llm_as_judge.ipynb", "routing_agent_evals.ipynb"):
+    for name in ("judge_lab.py", "llm_as_judge.ipynb", "jev_as_judge.ipynb", "routing_agent_evals.ipynb"):
         shutil.copy2(LAB / name, target / name)
     shutil.copytree(LAB / "prompts", target / "prompts")
     (target / "data").mkdir()
@@ -58,22 +58,33 @@ def notebook_lab(tmp_path_factory):
     cascade = run_cascade(heldout, client, threshold, jev=jev)
     save_json(evidence / "manifest.json", {
         "dataset_hash": digest(rows), "policy_hash": digest([POLICY, CRITERIA]),
+        **client.configuration(),
         "calibration_ids": [r["id"] for r in calibration],
         "heldout_ids": [r["id"] for r in heldout], "threshold": threshold,
         "heldout_metrics": [metrics(heldout, values, name) for name, values in
                             [("Jev alone", jev), ("LLM alone", llm), ("Jev then LLM", cascade)]]})
+    save_json(evidence / "jev_manifest.json", {
+        "dataset_hash": digest(rows), "policy_hash": digest([POLICY, CRITERIA]),
+        **client.configuration(),
+        "calibration_ids": [r["id"] for r in calibration],
+        "heldout_ids": [r["id"] for r in heldout],
+        "calibration_metrics": metrics(calibration, jev, "Jev calibration"),
+        "heldout_metrics": metrics(heldout, jev, "Jev held out"),
+        "full_dataset_metrics": metrics(rows, jev, "Jev full dataset")})
     return target
 
 
-@pytest.mark.parametrize("name", ["routing_agent_evals.ipynb", "llm_as_judge.ipynb"])
+@pytest.mark.parametrize("name", ["routing_agent_evals.ipynb", "jev_as_judge.ipynb", "llm_as_judge.ipynb"])
 def test_notebook_runs_offline_with_synthetic_responses(notebook_lab, name):
     notebook = nbformat.read(notebook_lab / name, as_version=4)
     nbformat.validate(notebook)
     notebook.cells.insert(0, nbformat.v4.new_code_cell(
         "import os, urllib.request\n"
         "os.environ['JUDGE_MODE'] = 'replay'\n"
+        "os.environ['JEV_MODE'] = 'replay'\n"
         "os.environ['ROUTER_MODE'] = 'replay'\n"
         "os.environ.pop('JUDGE_RUN_DIR', None)\n"
+        "os.environ.pop('JEV_RUN_DIR', None)\n"
         "os.environ.pop('JUDGE_EVIDENCE_DIR', None)\n"
         "def network_forbidden(*args, **kwargs):\n"
         "    raise AssertionError('Network attempted during offline integration test')\n"

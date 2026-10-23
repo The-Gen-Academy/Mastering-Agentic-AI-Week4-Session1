@@ -1,4 +1,5 @@
-"""Execute the two lessons in fresh kernels. Defaults to no-charge replay."""
+"""Execute lessons in fresh kernels; --jev-only needs no LLM credential."""
+import argparse
 from pathlib import Path
 
 import nbformat
@@ -6,10 +7,16 @@ from nbclient import NotebookClient
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--jev-only", action="store_true", help="Run router and recorded Jev lesson only")
+    args = parser.parse_args()
     lab = Path(__file__).resolve().parent
     output = lab / ".runs/executed"
     output.mkdir(parents=True, exist_ok=True)
-    for name in ("routing_agent_evals.ipynb", "llm_as_judge.ipynb"):
+    names = ["routing_agent_evals.ipynb", "jev_as_judge.ipynb"]
+    if not args.jev_only:
+        names.append("llm_as_judge.ipynb")
+    for name in names:
         notebook = nbformat.read(lab / name, as_version=4)
         nbformat.validate(notebook)
         NotebookClient(notebook, timeout=1800, kernel_name="python3",

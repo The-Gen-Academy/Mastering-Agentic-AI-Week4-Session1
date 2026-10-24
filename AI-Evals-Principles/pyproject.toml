@@ -1,7 +1,7 @@
 [project]
 name = "ai-evals-principles"
 version = "0.1.0"
-description = "Routing agent + LLM-as-a-judge evaluation notebooks (AI Evals Principles)"
+description = "Routing agent, Jev/LLM judges, and confidence-gated evaluation notebooks"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,9 +18,13 @@ dependencies = [
     "pandas",
     "numpy",
     "scikit-learn",
+    "matplotlib",
     # Notebook kernel
     "ipykernel",
 ]
+
+[dependency-groups]
+dev = ["nbformat", "nbclient"]
 
 [tool.uv]
 package = false

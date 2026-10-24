@@ -1,157 +1,208 @@
-# 🚦 AI Evals: Evaluating a Routing Agent
+# Evaluate a routing agent — and its judges
 
-A hands-on tutorial on **AI Evaluation principles**. You'll build a real routing agent, test it against a golden dataset, and then learn how to use an **LLM-as-a-Judge** to scale evaluation — and how to check whether that judge can actually be trusted.
+The example is a doctor's scheduling assistant: a router maps messages to one of ten
+intents. Notebook 1 evaluates those predictions. The judge notebooks ask a separate question:
+**did the router misclassify this message specifically because the utterance was vague?**
+It compares Jev alone, GPT-4.1-mini alone, and Jev with low-confidence cases sent to the LLM.
 
-The running example is a **doctor's scheduling assistant**: it takes natural language (*"I'm busy tomorrow"*) and maps it to an executable action (`BLOCK_SLOTS`).
+## Run locally
 
----
+From the repository root:
 
-## 📋 Why This Matters
-
-In most agentic systems, **routing** is the critical first step — figuring out *what* the user wants before doing anything. If routing is wrong, everything downstream is wrong.
-
-This tutorial answers two questions every AI team eventually faces:
-
-1. **Is my agent good enough?** → Measure it against ground truth (Notebook 1)
-2. **Can I evaluate at scale without a human reading every log?** → Use an LLM judge, then prove it agrees with humans (Notebook 2)
-
----
-
-## 📁 Repository Layout
-
+```bash
+cd AI-Evals-Principles
+uv sync --locked
+cd routing_agent_evals
 ```
+
+Select the project's Python kernel and run these notebooks in order:
+
+1. `routing_agent_evals.ipynb` — define the intents and router, evaluate saved or fresh predictions.
+2. `jev_as_judge.ipynb` — direct TypeSafe API, Jev Choice judgments, real recorded results and token-based cost estimates.
+3. `llm_as_judge.ipynb` — System 1 motivation, Jev Choice judgments, independent LLM judgments,
+   a fixed confidence cutoff of 0.7, agreement and costs on all 300 examples, and error analysis.
+
+**Completed comparison:** the saved outputs use 300 valid TypeSafe Jev judgments and
+300 valid independent OpenAI judgments. All three approaches are measured on the same
+300 human-labeled examples. The Jev-first approach uses a **fixed confidence cutoff of
+0.7**: keep a valid answer at or above 0.7; otherwise ask the LLM. The code does not search
+for a cutoff or split the data into separate groups. It sends **59/300 cases (19.7%)** to
+the LLM and keeps Jev on 241.
+
+| Judge | Human-label agreement | Failure recall | TRUE F1 | Estimated USD / 1,000 examples |
+| --- | ---: | ---: | ---: | ---: |
+| Always FALSE | 93.3% | 0/20 (0%) | 0.000 | $0 |
+| Jev alone | 89.3% | 0/20 (0%) | 0.000 | $0.05550 |
+| GPT-4.1-mini alone | 77.7% | 13/20 (65%) | 0.280 | $0.51101 |
+| Jev then LLM | 85.0% | 10/20 (50%) | 0.308 | $0.15923 |
+
+**Escalation lowers agreement from Jev's 89.3% to 85.0%.** On the 59 escalated cases,
+Jev agrees with 36 labels (61.0%) and the LLM with 23 (39.0%): the fallback fixes 11 errors
+and introduces 24. The combination detects ten failures Jev misses, with 23 additional
+false alarms. Its estimated **68.8% cost saving is relative to LLM alone**, which finds
+three more failures. These results demonstrate a tradeoff, not a successful agreement
+improvement over Jev. The comparison notebook discusses a published successful cascade,
+the conditions it needs, and a specific rubric/label disagreement to audit before rerunning.
+
+The full comparison obtains 600 model responses, with an estimated list-price cost of
+**$0.16995**. Running only the Jev-first approach on these examples would use 300 Jev
+responses and 59 LLM responses, costing an estimated **$0.04777**. Raw response caches,
+manifests and test files are not included in the repository.
+
+Costs use returned token counts and frozen published rates, including observed OpenAI
+cache counts; they are not invoices or guaranteed production costs. There were no
+unresolved judgments. These figures describe the 300 labeled examples; they do not establish
+performance on new data. Check the policy on new human-reviewed examples before adoption.
+
+The saved outputs can be read without running code. The router defaults to replay of its
+original CSV predictions. On a fresh checkout, the judge notebooks run **live** and require
+provider credentials. Optional replay uses a run directory you generated locally:
+`JUDGE_EVIDENCE_DIR`, or the notebook's own `.runs/` directory. It checks the request,
+dataset, evaluation IDs, threshold and metrics against your local manifest, without new API calls.
+Generated responses and reports stay in ignored `.runs/` directories.
+
+For **live** mode, set the notebook's mode selector or export `ROUTER_MODE=live` /
+`JUDGE_MODE=live`; use `JEV_MODE=live` for the Jev-only notebook. The router needs
+`OPENAI_API_KEY`. Jev uses **`TYPESAFE_API_KEY`** directly by default. The independent LLM
+uses **`OPENAI_API_KEY`** directly by default; set `LLM_PROVIDER=openrouter` to use
+`OPENROUTER_API_KEY` instead.
+Set `JEV_PROVIDER=openrouter` in the comparison if you prefer to call both stages through
+OpenRouter. Credentials are scoped to each stage and never sent to the other provider.
+Use environment variables, an ignored `.env` inside `routing_agent_evals`, Colab Secrets,
+or the hidden prompt. Never put credentials in notebook cells. HTTP 401/402/403 stops the
+run so keys, account credits or access can be fixed. Completed requests are cached by
+endpoint and exact request hash; use a new `JUDGE_RUN_DIR` (or `JEV_RUN_DIR` for Jev alone)
+for an independent rerun. A completed live notebook writes a manifest alongside its cache;
+set `JUDGE_MODE=replay` and `JUDGE_EVIDENCE_DIR` to that directory to replay it.
+
+The recorded comparison uses `jev-1.13.0` directly and `gpt-4.1-mini-2025-04-14` directly.
+These identifiers are frozen for reproducibility, not claims about the newest models.
+
+## Run in Colab
+
+Open a notebook from GitHub. Its setup cell clones the comparison branch if a checkout
+is not already available and installs the notebook dependencies. `REPO_REF` defaults to
+`codex/jev-routing-judge` so the pull request is runnable before merge. Set
+`ROUTING_EVALS_REF=main` after the change is merged, or use a specific commit for a frozen
+version of the evaluation. Use a CPU runtime; no Docker or GPU is needed.
+
+## What the judge comparison measures
+
+- **Task:** binary agreement with the existing `Vague_Utterance_Failure` human label.
+  `FALSE` includes correct routing and misclassifications caused by other failure modes.
+  This is not overall intent accuracy or a new classification of the message.
+- **Inputs:** both judges see the same query, candidate intent and policy. Human targets,
+  comments, categories and Boolean labels are excluded. The LLM never sees Jev's answer.
+- **Jev primitive:** `choice`, not `score`. The returned `TRUE`/`FALSE` label is used directly.
+  Confidence and the winning-option probability are distinct quantities.
+- **Examples:** all three approaches use the same 300 rows. Human labels are used for
+  measuring agreement, not choosing a confidence cutoff.
+- **Gate:** a fixed Jev confidence of **0.7** or above keeps Jev; otherwise the LLM judges the
+  same trace independently. Invalid Jev outputs also escalate. Failed LLM outputs remain
+  unresolved and count against accuracy; they are never silently accepted.
+- **Metrics:** accuracy, TRUE precision/recall/F1, confusion counts, unresolved cases,
+  escalation rate and per-request API cost. An always-FALSE baseline exposes imbalance.
+- **Costs:** reported `usage.cost` is preferred. Direct TypeSafe costs are explicitly
+  estimated from returned tokens at the frozen $0.042/M input-token rate (output free),
+  with its source and date recorded. Separate fields retain reported, estimated and unknown
+  amounts; unsupported models and missing usage remain unknown. For the pinned direct
+  OpenAI model, standard-tier estimates use $0.40/M input, $0.10/M cached input and
+  $1.60/M output tokens, using returned cache counts. Cascade cost includes Jev on every
+  row plus only escalated LLM calls. The full
+  comparison additionally obtains LLM answers for every example.
+- **Mechanism:** compare high/low-confidence subsets and LLM fixes versus regressions.
+  A cascade only improves quality when the second judge fixes more errors than it adds
+  on the escalated subset. High-confidence errors and correlated mistakes can defeat it.
+
+## Why use the confidence policy?
+
+The policy reserves the LLM for uncertain or unusable Jev judgments. Keeping a valid,
+high-confidence answer avoids a second call on cases Jev handles reliably on validation
+data. Escalating low-confidence cases gives an independent judge a chance to correct
+them. Invalid outputs also escalate because an unusable label cannot be accepted, even
+if a confidence field looks high.
+
+If the LLM also fails, nothing has made the original rejected answer more trustworthy.
+Recording an unresolved case preserves that uncertainty for human review. In this lab,
+that means an explicit unresolved result in the output table; it does not dispatch a
+human-review task.
+
+For escalation fraction `r`, average per-case cost is approximately
+`Jev cost + r × LLM cost`. The policy saves money when this is below the cost of asking
+the LLM on every case. Quality is a separate question: the LLM must fix more errors than
+it introduces on the escalated subset to improve agreement over Jev alone.
+
+With the fixed 0.7 cutoff, the 241 accepted Jev judgments have 96.3% agreement.
+Avoiding those LLM calls reduces estimated cost by 68.8% versus LLM alone. But the LLM
+fixes 11 errors and introduces 24 among the 59 escalations. The policy finds ten additional
+Vague Utterance failures compared with Jev alone, while adding false alarms and lowering
+agreement. The cutoff remains 0.7 throughout the comparison; its effect is measured against the human labels.
+
+## Reference data: the supplied workshop spreadsheet
+
+The authoritative source is **[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit)**. The three local CSVs
+are snapshots of its tabs read on **2026-10-23**, so the notebooks run reproducibly without
+Google credentials. See [data provenance](routing_agent_evals/data/README.md).
+
+| Local CSV | Spreadsheet tab | Used for |
+| --- | --- | --- |
+| `golden_dataset.csv` | Golden Dataset Full | 301 routing queries and target intents |
+| `llm_as_judge_dataset.csv` | LLM as a Judge Dataset | 300 judge traces and explicit `Vague_Utterance_Failure` labels |
+| `golden_dataset_with_predictions.csv` | Golden Dataset with predictions | 301 saved routing predictions |
+
+The two judge notebooks use only **LLM as a Judge Dataset** as their reference. All 300
+queries, predicted intents and human labels match the completed API experiment, so the
+recorded responses can be reused for the fixed-policy comparison. Refreshing from the spreadsheet corrects shifted supporting
+columns in the old judge CSV; `intent_match` now contains pass/fail values. That field
+answers whether the intent matched, not whether a failure was caused by vagueness.
+
+There are 20 TRUE and 280 FALSE judge labels. Always predicting FALSE produces 93.3%
+full-dataset agreement while detecting no failures. “Agreement” means matching the
+supplied human label; it is not a claim that every human label is beyond dispute. Neither
+judge's ground truth is inferred from another tab or from `intent_match`.
+
+For routing, the two relevant spreadsheet tabs differ on 13 target labels and on the
+query text for `TEST_227`. Notebook 1 displays those differences, uses **Golden Dataset
+Full** targets, and evaluates only the 300 saved predictions whose IDs and trimmed query
+text match. It explicitly excludes the mismatched trace; live mode runs all 301 golden
+queries. Those routing-tab differences do not filter the judge dataset. New router
+predictions require new human judge labels before joining the judge benchmark.
+
+## Notebook execution
+
+From `AI-Evals-Principles` after `uv sync --locked`:
+
+```bash
+uv run python routing_agent_evals/run_notebooks.py --jev-only
+uv run python routing_agent_evals/run_notebooks.py
+```
+
+`--jev-only` runs just the router and Jev notebook. Fresh live runs require funded provider
+credentials. To use a previously generated local run, set `JUDGE_EVIDENCE_DIR` to its
+directory and select replay with `JUDGE_MODE=replay` / `JEV_MODE=replay` as applicable.
+The runner executes the selected notebooks top to bottom in fresh kernels, writes executed copies
+to `.runs/executed`, and fails on any cell error. All three notebooks were executed after
+switching to the fixed confidence policy, using a verification copy of the completed API
+responses outside the repository. No new API calls were needed: judge inputs and labels are unchanged.
+
+## Files
+
+```text
 routing_agent_evals/
-├── routing_agent_evals.ipynb     # Notebook 1: Build & evaluate the router
-├── llm_as_judge.ipynb            # Notebook 2: LLM-as-a-Judge alignment
-├── data/
-│   ├── golden_dataset.csv                  # Ground-truth test cases
-│   ├── golden_dataset_small_5.csv          # 5-row subset for quick smoke tests
-│   ├── golden_dataset_with_predictions.csv # Router predictions (output of NB1)
-│   ├── llm_as_judge_dataset.csv            # Human-labeled failures
-│   └── judge_alignment_*.csv               # Judge vs. human results
-├── prompts/
-│   ├── router_prompts.py                   # Router system prompt
-│   ├── llm_as_judge_prompt.py              # Judge evaluation prompt
-│   └── failure_categorization_prompts.py   # Prompt to mine failure categories
-└── images/                                 # Diagrams used in the notebooks
+  routing_agent_evals.ipynb   Router evaluation, replay/live modes
+  jev_as_judge.ipynb         Direct TypeSafe API and recorded Jev-only results
+  llm_as_judge.ipynb          Jev / LLM / confidence-gated judge comparison
+  judge_lab.py               Shared policy, API client, validation and metrics
+  run_notebooks.py           Execute selected notebooks with clean kernels
+  data/                      Source CSV snapshots and provenance
+  prompts/                   Original router and judge policies
+  images/                    Existing router diagrams
 ```
 
----
+## References
 
-## 🚀 Getting Started
-
-### 1. Install dependencies
-
-This project uses [**uv**](https://docs.astral.sh/uv/) for dependency management (see `pyproject.toml` + `uv.lock`). From the repo root:
-
-```bash
-uv sync
-```
-
-This creates a `.venv` with everything pinned in `uv.lock`. Requires **Python ≥ 3.10**. (Prefer pip? Use `pip install -e .` into your own virtual environment instead.)
-
-### 2. Add your API key
-
-The notebooks load secrets from a `.env` file **inside `routing_agent_evals/`** (they call `load_dotenv(dotenv_path=".env")` from that directory). Create it there:
-
-```bash
-# routing_agent_evals/.env
-OPENAI_API_KEY=your_api_key_here
-
-# Optional — only needed for the LangSmith tracing cells
-LANGSMITH_API_KEY=your_langsmith_key_here
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=ai-evals-principles
-```
-
-Get an OpenAI key from [OpenAI](https://platform.openai.com/); the LangSmith keys are optional and only used for the tracing/feedback cells.
-
-### 3. Run the notebooks in order
-
-Open `routing_agent_evals/routing_agent_evals.ipynb` first, then `routing_agent_evals/llm_as_judge.ipynb`. Select the `.venv` created by `uv sync` as the notebook kernel, then run all cells top to bottom.
-
-> ⏱️ **Heads up:** Both notebooks make one API call per row. A full run of Notebook 1 takes ~7 min; Notebook 2 takes ~20–35 min depending on the judge model. The repo already ships the saved CSV outputs, so you can also just read along.
-
----
-
-## 📓 Notebook 1 — Build & Evaluate the Router
-
-**File:** `routing_agent_evals.ipynb`
-
-This notebook builds the router from scratch and grades it.
-
-| Step | What happens | Key idea |
-|------|--------------|----------|
-| **1. Setup** | Load libraries and API keys | — |
-| **2. Define intents** | Declare all 10 actions as a Python `Enum`, each with a description | The description *is* the prompt that teaches the LLM what each intent means |
-| **3. Flatten intents** | Turn the Enum into a list to inject into the prompt | Single source of truth for intent definitions |
-| **4. Init model** | `gpt-4o-mini`, `temperature=0` | Routing should be **fast** (small model) and **deterministic** (temp 0) |
-| **5. Router agent** | Bind a **Pydantic schema** (`intent`, `confidence`, `reasoning`) to the LLM | Forces structured output + chain-of-thought, not rambling text |
-| **6. Sanity check** | Run one query to confirm it works | Always test one before testing all |
-| **7. Batch eval** | Run the router over the **golden dataset** | Compare each prediction to human ground truth |
-| **8–11. Analyze** | Class distribution → classification report | Use **Precision / Recall / F1**, not just accuracy |
-
-### The metrics that matter
-
-- **Precision** — *"When the model says X, is it really X?"* Low precision = false alarms.
-- **Recall** — *"Of all the real X queries, how many did we catch?"* Low recall = missed cases.
-- **F1** — the harmonic mean; one number to compare intents.
-
-> 🔍 **Watch for confusable intents.** Does the router mix up `BLOCK_SLOTS` (doctor unavailable) with `UNBLOCK_SLOTS` (doctor available)? A low score there usually means the intent *description* needs sharpening — not a bigger model.
-
----
-
-## 👨‍⚖️ Notebook 2 — LLM-as-a-Judge & Alignment
-
-**File:** `llm_as_judge.ipynb`
-
-Reading thousands of agent logs by hand doesn't scale. So we hire an **LLM judge** to grade them. But a judge is only useful if it agrees with humans — so the real lesson here is **measuring that agreement**.
-
-The judge here answers one focused question: *Did the router fail because the user's utterance was **vague**?*
-
-| Step | What happens | Key idea |
-|------|--------------|----------|
-| **1. Init judges** | `gpt-4o` and `gpt-5-mini`, `temperature=0` | The judge is usually a *stronger* model than the one being tested |
-| **2. Schema** | Pydantic `label` (`TRUE`/`FALSE`) + `reasoning` | Clean booleans we can compute metrics on |
-| **3. Sanity check** | Grade one edge case (*"Clear my 3 PM"*) | Confirm the judge logic holds |
-| **4. Load data** | `llm_as_judge_dataset.csv` with **human labels** | The human column is our ground truth for the judge |
-| **5. Batch judge** | Run the judge over every row | One API call per log |
-| **7–10. Align** | Class balance → confusion matrix → Precision/Recall | Measure judge vs. human agreement |
-| **11. Verify** | Re-check on the second judge's saved results | Reproducibility check |
-
-### Reading the alignment
-
-The dataset is **heavily imbalanced** (~93% "no failure", ~7% "failure"). That's the whole point:
-
-> A lazy judge that always answers "FALSE" scores **93% accuracy** while catching **zero** real failures. Accuracy lies on imbalanced data — that's why we look at the **confusion matrix** and the **Precision/Recall of the rare `TRUE` class**.
-
-In this tutorial, `gpt-5-mini` reaches ~88% accuracy but only ~0.28 F1 on the `TRUE` class — a concrete reminder that a judge can look good and still miss most of the failures you actually care about.
-
----
-
-## 🧠 The Big Lessons
-
-1. **Definitions are prompts.** Most routing errors are fixed by sharper intent descriptions, not bigger models.
-2. **Accuracy is misleading.** On imbalanced data, lean on Precision, Recall, F1, and the confusion matrix.
-3. **Trust, then verify your judge.** An LLM judge only earns the right to scale your evals *after* you've measured its alignment with humans.
-
----
-
-## 🛠️ Tech Stack
-
-| Tool | Role |
-|------|------|
-| **LangChain 1.0** | Chains prompts + models together |
-| **OpenAI GPT models** | `gpt-4o-mini` (router), `gpt-4o` + `gpt-5-mini` (judges) |
-| **Pydantic v2** | Forces valid, structured output |
-| **Pandas** | Batch processing and analysis |
-| **scikit-learn** | Precision, Recall, F1, confusion matrix |
-| **LangSmith** | Optional tracing / feedback / dataset cells |
-| **uv** | Dependency management + reproducible env |
-
----
-
-## 📚 Resources
-
-- [Evals Workbook (The Gen Academy)](https://docs.google.com/spreadsheets/d/1O4VwHehFm9ebc1-szXWSyOj7DI8tn5Jp7kLajBO5N_o/edit?usp=sharing)
-- [LangSmith Evaluation](https://docs.smith.langchain.com/evaluation)
+- [TypeSafe introduction](https://docs.typesafe.ai/introduction)
+- [Choice](https://docs.typesafe.ai/primitives/choice) and [confidence](https://docs.typesafe.ai/confidence)
+- [TypeSafe model versions and pricing](https://docs.typesafe.ai/models)
+- [OpenAI GPT-4.1-mini versions and pricing](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
+- [Evals workbook](https://docs.google.com/spreadsheets/d/1O4VwHehFm9ebc1-szXWSyOj7DI8tn5Jp7kLajBO5N_o/edit)

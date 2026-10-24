@@ -1,0 +1,4 @@
+.runs/
+# Local response caches and manifests are runtime artifacts, not lesson source.
+data/jev_judge_run/
+cache/

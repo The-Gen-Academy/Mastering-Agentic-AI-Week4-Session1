@@ -46,7 +46,7 @@ JUDGE_DATA_SOURCE = {
     "snapshot_date": "2026-10-23",
     "label_column": "Vague_Utterance_Failure",
 }
-CONFIDENCE_THRESHOLD = 0.7  # Fixed lesson policy; not selected from human labels.
+CONFIDENCE_THRESHOLD = 0.7  # Fixed confidence cutoff; not selected from human labels.
 # Reuse the original task definition and intent rules, without its legacy
 # output-format instruction or embedded input placeholders.
 POLICY = VAGUE_UTTERANCES_FAILURE_PROMPT.split("# Output format (STRICT)")[0].strip()

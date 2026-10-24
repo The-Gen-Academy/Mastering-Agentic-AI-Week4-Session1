@@ -49,7 +49,7 @@ manifests and test files are not included in the repository.
 
 Costs use returned token counts and frozen published rates, including observed OpenAI
 cache counts; they are not invoices or guaranteed production costs. There were no
-unresolved judgments. These figures describe the 300 lesson examples; they do not establish
+unresolved judgments. These figures describe the 300 labeled examples; they do not establish
 performance on new data. Check the policy on new human-reviewed examples before adoption.
 
 The saved outputs can be read without running code. The router defaults to replay of its
@@ -60,7 +60,7 @@ dataset, evaluation IDs, threshold and metrics against your local manifest, with
 Generated responses and reports stay in ignored `.runs/` directories.
 
 For **live** mode, set the notebook's mode selector or export `ROUTER_MODE=live` /
-`JUDGE_MODE=live`; use `JEV_MODE=live` for the Jev-only lesson. The router needs
+`JUDGE_MODE=live`; use `JEV_MODE=live` for the Jev-only notebook. The router needs
 `OPENAI_API_KEY`. Jev uses **`TYPESAFE_API_KEY`** directly by default. The independent LLM
 uses **`OPENAI_API_KEY`** directly by default; set `LLM_PROVIDER=openrouter` to use
 `OPENROUTER_API_KEY` instead.
@@ -78,13 +78,13 @@ These identifiers are frozen for reproducibility, not claims about the newest mo
 
 ## Run in Colab
 
-Open a notebook from GitHub. Its setup cell clones the teaching branch if a checkout
+Open a notebook from GitHub. Its setup cell clones the comparison branch if a checkout
 is not already available and installs the notebook dependencies. `REPO_REF` defaults to
 `codex/jev-routing-judge` so the pull request is runnable before merge. Set
 `ROUTING_EVALS_REF=main` after the change is merged, or use a specific commit for a frozen
-teaching session. Use a CPU runtime; no Docker or GPU is needed.
+version of the evaluation. Use a CPU runtime; no Docker or GPU is needed.
 
-## What the judge lab measures
+## What the judge comparison measures
 
 - **Task:** binary agreement with the existing `Vague_Utterance_Failure` human label.
   `FALSE` includes correct routing and misclassifications caused by other failure modes.
@@ -134,7 +134,7 @@ With the fixed 0.7 cutoff, the 241 accepted Jev judgments have 96.3% agreement.
 Avoiding those LLM calls reduces estimated cost by 68.8% versus LLM alone. But the LLM
 fixes 11 errors and introduces 24 among the 59 escalations. The policy finds ten additional
 Vague Utterance failures compared with Jev alone, while adding false alarms and lowering
-agreement. The fixed cutoff is a lesson setting, not a guarantee of correctness.
+agreement. The cutoff remains 0.7 throughout the comparison; its effect is measured against the human labels.
 
 ## Reference data: the supplied workshop spreadsheet
 
@@ -187,9 +187,9 @@ responses outside the repository. No new API calls were needed: judge inputs and
 
 ```text
 routing_agent_evals/
-  routing_agent_evals.ipynb   Router lesson, replay/live modes
-  jev_as_judge.ipynb         Direct TypeSafe lesson and recorded Jev-only results
-  llm_as_judge.ipynb          Jev / LLM / confidence-gated judge lesson
+  routing_agent_evals.ipynb   Router evaluation, replay/live modes
+  jev_as_judge.ipynb         Direct TypeSafe API and recorded Jev-only results
+  llm_as_judge.ipynb          Jev / LLM / confidence-gated judge comparison
   judge_lab.py               Shared policy, API client, validation and metrics
   run_notebooks.py           Execute selected notebooks with clean kernels
   data/                      Source CSV snapshots and provenance

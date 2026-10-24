@@ -1,6 +1,6 @@
 # Reference data
 
-Source: **[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit)**, supplied for this lesson.
+Source: **[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit)**.
 Snapshots read on **2026-10-23** through the Google Sheets API. Row order and cell values
 are preserved; empty cells become empty CSV fields. These are source datasets, not model
 response caches. Re-running notebooks does not modify them.

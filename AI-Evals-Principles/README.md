@@ -36,11 +36,13 @@ the LLM and keeps Jev on 241.
 | GPT-4.1-mini alone | 77.7% | 13/20 (65%) | 0.280 | $0.51101 |
 | Jev then LLM | 85.0% | 10/20 (50%) | 0.308 | $0.15923 |
 
-The Jev-first approach costs an estimated **68.8% less than LLM alone** on these examples
-and has higher agreement, but misses three failures the LLM finds. Compared with Jev
-alone, it detects ten additional failures while reducing agreement. On the 59 escalated
-cases, the LLM fixes 11 Jev errors and introduces 24, so escalation does not improve every
-metric. The low-confidence cases are harder, but the LLM is not more accurate on them overall.
+**Escalation lowers agreement from Jev's 89.3% to 85.0%.** On the 59 escalated cases,
+Jev agrees with 36 labels (61.0%) and the LLM with 23 (39.0%): the fallback fixes 11 errors
+and introduces 24. The combination detects ten failures Jev misses, with 23 additional
+false alarms. Its estimated **68.8% cost saving is relative to LLM alone**, which finds
+three more failures. These results demonstrate a tradeoff, not a successful agreement
+improvement over Jev. The comparison notebook discusses a published successful cascade,
+the conditions it needs, and a specific rubric/label disagreement to audit before rerunning.
 
 The full comparison obtains 600 model responses, with an estimated list-price cost of
 **$0.16995**. Running only the Jev-first approach on these examples would use 300 Jev

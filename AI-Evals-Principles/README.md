@@ -22,6 +22,13 @@ Select the project's Python kernel and run these notebooks in order:
 3. `llm_as_judge.ipynb` — System 1 motivation, Jev Choice judgments, independent LLM judgments,
    a fixed confidence cutoff of 0.7, agreement and costs on all 300 examples, and error analysis.
 
+The comparison notebook shows the main steps directly: load the examples, run each
+judge, choose an answer with an `if/else`, and compare the results. `setup_run` handles
+credentials and replay; `save_run` writes reports and verifies a replay against its
+manifest. Both helpers are in `notebook_utils.py`. Set `mode="auto"`, `"live"`, or
+`"replay"` in the setup cell. The confidence loop reuses the answers already obtained
+for the standalone comparisons, so it makes no additional API calls.
+
 **Completed comparison:** the saved outputs use 300 valid TypeSafe Jev judgments and
 300 valid independent OpenAI judgments. All three approaches are measured on the same
 300 human-labeled examples. The Jev-first approach uses a **fixed confidence cutoff of
@@ -193,6 +200,7 @@ routing_agent_evals/
   jev_as_judge.ipynb         Direct TypeSafe API and recorded Jev-only results
   llm_as_judge.ipynb          Jev / LLM / confidence-gated judge comparison
   judge_lab.py               Shared policy, API client, validation and metrics
+  notebook_utils.py          Credential setup, saving and replay verification
   run_notebooks.py           Execute selected notebooks with clean kernels
   data/                      Source CSV snapshots and provenance
   prompts/                   Original router and judge policies

@@ -36,7 +36,7 @@ TEST_034,Free up this weekend,UPDATE_SPECIAL_SLOTS,UNBLOCK_SLOTS,high,"The user 
 TEST_035,I need to clear Sunday's block,UNBLOCK_SLOTS,UNBLOCK_SLOTS,high,"The user is requesting to clear a block, which indicates they want to unblock previously blocked time slots.",pass
 TEST_036,Im free again,UNBLOCK_SLOTS,UNBLOCK_SLOTS,high,"The user indicates they are available again, which suggests they want to unblock previously blocked time slots.",pass
 TEST_037,Im free,UNBLOCK_SLOTS,UNBLOCK_SLOTS,high,"The user indicates they are available, which suggests they want to unblock time slots in their schedule.",pass
-TEST_038," open up my mornings for next week",UPDATE_SPECIAL_SLOTS,UNBLOCK_SLOTS,high,"The user is requesting to make their mornings available again for the next week, which aligns with the action of unblocking time slots.",fail
+TEST_038, open up my mornings for next week,UPDATE_SPECIAL_SLOTS,UNBLOCK_SLOTS,high,"The user is requesting to make their mornings available again for the next week, which aligns with the action of unblocking time slots.",fail
 TEST_039,Make November 13th available again,UNBLOCK_SLOTS,UNBLOCK_SLOTS,high,"The user is requesting to make a specific date (November 13th) available again, which aligns with the action of unblocking time slots.",pass
 TEST_040,I can work this monday again,UNBLOCK_SLOTS,IRRELEVANT_QUERY,high,"The user's statement does not relate to any specific action regarding appointments, scheduling, or doctor-related queries.",fail
 TEST_041,Add extra hours for upcoming Tuesday,UPDATE_SPECIAL_SLOTS,UPDATE_SPECIAL_SLOTS,high,"The user is requesting to change their availability by adding extra hours for a specific day, which falls under updating special slots.",pass

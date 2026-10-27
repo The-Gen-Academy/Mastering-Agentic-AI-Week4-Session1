@@ -12,12 +12,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from judge_lab import (
-    CRITERIA, DEFAULT_PROVIDERS, JUDGE_DATA_SOURCE, POLICY,
+    CRITERIA, DEFAULT_PROVIDERS, JUDGE_DATA_SOURCE,
     JudgeClient, digest, save_json,
 )
 
 
-def setup_run(lab, mode="auto"):
+def setup_run(lab, mode="auto", prompts=None):
     """Return the client, output directory, and any manifest to verify on replay.
 
     Auto mode replays a completed local run, or runs live on a fresh checkout.
@@ -25,7 +25,7 @@ def setup_run(lab, mode="auto"):
     """
     lab = Path(lab)
     load_dotenv(lab / ".env", override=False)
-    run_dir = Path(os.environ.get("JUDGE_RUN_DIR", lab / ".runs/judge"))
+    run_dir = Path(os.environ.get("JUDGE_RUN_DIR", lab / ".runs/indirect-judge"))
     evidence_dir = Path(os.environ.get("JUDGE_EVIDENCE_DIR", run_dir))
     manifest_path = evidence_dir / "manifest.json"
     if mode == "auto":
@@ -42,7 +42,7 @@ def setup_run(lab, mode="auto"):
     }
     cache_dir = (evidence_dir if mode == "replay" else run_dir) / "cache"
     client = JudgeClient(cache_dir, live=(mode == "live"), providers=providers,
-                         models=manifest.get("models"), pricing=manifest.get("pricing"))
+                         models=manifest.get("models"), pricing=manifest.get("pricing"), prompts=prompts)
     if client.live:
         keys = {}
         for stage, name in client.key_names.items():
@@ -69,7 +69,7 @@ def save_run(client, run_dir, manifest, rows, threshold, comparison, bands):
     """Save reports, or verify the same data, policy, cutoff, and metrics on replay."""
     summary = {
         "dataset_hash": digest(rows), "dataset_source": JUDGE_DATA_SOURCE,
-        "policy_hash": digest([POLICY, CRITERIA]),
+        "policy_hash": digest([client.prompts, CRITERIA]),
         "evaluation_ids": [row["id"] for row in rows],
         "threshold": threshold, "threshold_kind": "confidence",
         **client.configuration(),

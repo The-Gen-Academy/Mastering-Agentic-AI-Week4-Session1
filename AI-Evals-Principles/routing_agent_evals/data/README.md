@@ -1,29 +1,29 @@
 # Reference data
 
-Source: **[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit)**.
-Snapshots read on **2026-10-23** through the Google Sheets API. Row order and cell values
-are preserved; empty cells become empty CSV fields. These are source datasets, not model
-response caches. Re-running notebooks does not modify them.
+The judge notebooks use **llm_as_judge_indirect_underspecified.csv** from main commit
+`21d0f8c2339ecf64420fb0fffd08be34e60a8b0b` (October 26, 2026).
 
-| File | Source tab | Data rows | Reference role |
-| --- | --- | ---: | --- |
-| `golden_dataset.csv` | [Golden Dataset Full](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit#gid=544654879) | 301 | `USER_INPUT` and `TARGET_INTENT` for routing |
-| `llm_as_judge_dataset.csv` | [LLM as a Judge Dataset](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit#gid=556727646) | 300 | `USER_INPUT`, `final_intent`, and `Vague_Utterance_Failure` for judges |
-| `golden_dataset_with_predictions.csv` | [Golden Dataset with predictions](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit#gid=305434486) | 301 | Saved routing outputs for replay |
+- 300 routing traces, with 23 TRUE and 277 FALSE reference labels.
+- The label is `Indirect_or_Underspecified_Failure`. FALSE does not guarantee the
+  routing prediction is correct; it can contain a different kind of error.
+- Six worked examples in the prompt are excluded automatically, leaving
+  **294 evaluation cases: 20 TRUE and 274 FALSE**.
+- Labels are provisional. Some capability and ambiguity boundaries still need
+  human review. No label is changed to improve a model's score.
+- Models receive only `USER_INPUT` and `final_intent`. Targets, comments, categories,
+  and reference labels remain outside model inputs.
 
-The judge loader reads only the judge CSV. Its explicit Boolean human labels are kept
-as supplied; `intent_match`, target intents, comments and categories never supply the
-judge answer. Compared with the previous repository CSV, 248 rows have corrected
-`final_reasoning`, `intent_match` and comment columns. All 300 judge IDs, queries,
-predicted intents and human labels are unchanged, preserving the completed benchmark.
+`judge_indirect_split.csv` is retained from the latest main branch for provenance.
+The simplified comparison uses all non-demonstration cases; it does not create or
+require train/dev/test groups. It is a practice comparison, not an untouched holdout.
 
-Routing replay uses Golden Dataset Full targets. The prediction tab has 13 different
-targets, which are displayed before recomputing matches. `TEST_227` contains “Delete my
-appointment with Dr. Lee.” in Golden Dataset Full and “Delete my appointment with Lee.”
-in the prediction/judge tabs. Router replay excludes that one trace from its 301-row
-reference and evaluates the other 300; the judge experiment keeps its own tab's trace
-and human label. No label or prediction is silently transferred to a different query.
+`llm_as_judge_dataset.csv` is the older Vague Utterance task. Its labels and recorded
+scores must not be mixed with the current definition. It remains available for
+historical reference, but the current judge loader does not use it.
 
-`judge_alignment_1.csv`, `judge_alignment_2.csv`, and `golden_dataset_small_5.csv` are
-legacy files retained from the original repository. They are not used by the three
-evaluation notebooks.
+The original workshop source is
+[AI Evals - Workshop](https://docs.google.com/spreadsheets/d/1DLDctkBD3dFXenVdxHPDoMsvxauGJsnFB-1yKFfbQsE/edit).
+The October 23 snapshots have 301 rows in `golden_dataset.csv` and
+`golden_dataset_with_predictions.csv`, and 300 in `llm_as_judge_dataset.csv`.
+The revised failure-category labels above come from the October 26 repository update.
+Notebook runs do not rewrite these datasets.

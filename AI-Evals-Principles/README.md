@@ -79,7 +79,8 @@ inference cell incurs new API usage; no local response cache or replay is used.
 
 ## Choose the confidence threshold
 
-`THRESHOLD = 0.70` is a starting setting, not an automatically learned cutoff.
+The confidence threshold is **0.70**: accept valid Jev verdicts at or above it and
+send lower-confidence cases to GPT-5.
 For binary Choice, native confidence is `2 × max(P(TRUE), P(FALSE)) − 1`, so 0.70
 corresponds to a winning-label probability of 0.85. It does not mean 70% measured
 accuracy. [TypeSafe explains the confidence calculation](https://docs.typesafe.ai/confidence).
@@ -88,8 +89,8 @@ The [CMU Jev-as-a-Judge study](https://arxiv.org/html/2609.26550v5) chooses a th
 on local labeled examples, checks its accuracy loss against the fallback conservatively,
 and evaluates it on separate cases. Its threshold uses winning probability, so it must
 be converted to the native-confidence scale used here. The notebook explains that
-procedure and displays a practice threshold table. Choose the setting before examining
-evaluation results; the table does not change `THRESHOLD` for you.
+procedure and compares candidate thresholds on the practice cases, alongside failure
+recall, false alarms, and estimated cost.
 
 ## Inspect the run
 

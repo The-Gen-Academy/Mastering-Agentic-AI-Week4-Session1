@@ -1,4 +1,4 @@
-"""Reproducible Jev/LLM judge comparison. Network access is opt-in.
+"""Live Jev/LLM judge comparison with an audit log for every call.
 
 Only the public user query and candidate intent reach the judges. Human labels
 are used by the metric functions, never by request builders.
@@ -12,6 +12,7 @@ import math
 import time
 import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,25 +23,25 @@ from prompts.llm_as_judge_prompt import (
 )
 
 JEV_MODEL = "jev-1.13.0"
-LLM_MODEL = "gpt-4.1-mini-2025-04-14"
+LLM_MODEL = "gpt-5-2025-08-07"
 ENDPOINTS = {"jev": "https://api.typesafe.ai/v1/systemone",
              "llm": "https://api.openai.com/v1/chat/completions"}
 DEFAULT_PROVIDERS = {"jev": "typesafe", "llm": "openai"}
 PROVIDER_CONFIG = {
     ("jev", "typesafe"): (ENDPOINTS["jev"], JEV_MODEL, "TYPESAFE_API_KEY"),
     ("jev", "openrouter"): ("https://openrouter.ai/api/v1/systemone", "typesafe/jev-1.13", "OPENROUTER_API_KEY"),
-    ("llm", "openrouter"): ("https://openrouter.ai/api/v1/chat/completions", "openai/gpt-4.1-mini", "OPENROUTER_API_KEY"),
+    ("llm", "openrouter"): ("https://openrouter.ai/api/v1/chat/completions", "openai/gpt-5", "OPENROUTER_API_KEY"),
     ("llm", "openai"): (ENDPOINTS["llm"], LLM_MODEL, "OPENAI_API_KEY"),
 }
 # Frozen list-price estimate, not a reported charge. Unknown models stay unknown.
 DEFAULT_PRICING = {"jev": {"provider": "typesafe", "model": "jev-1.13.0",
     "input_usd_per_million": 0.042, "output_usd_per_million": 0.0,
     "source": "https://docs.typesafe.ai/models", "checked_on": "2026-10-22"},
-    "llm": {"provider": "openai", "model": "gpt-4.1-mini-2025-04-14",
-    "input_usd_per_million": 0.40, "cached_input_usd_per_million": 0.10,
-    "output_usd_per_million": 1.60,
-    "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
-    "checked_on": "2026-10-22"}}
+    "llm": {"provider": "openai", "model": "gpt-5-2025-08-07",
+    "input_usd_per_million": 1.25, "cached_input_usd_per_million": 0.125,
+    "output_usd_per_million": 10.0,
+    "source": "https://developers.openai.com/api/docs/models/gpt-5",
+    "checked_on": "2026-10-27"}}
 LABELS = ("TRUE", "FALSE")
 JUDGE_DATA_SOURCE = {
     "file": "llm_as_judge_indirect_underspecified.csv",
@@ -74,13 +75,13 @@ def save_json(path, value):
 
 
 def load_dataset(data_dir, split="calibration"):
-    """Load the reference notebook's frozen panel; validation is explicit opt-in.
+    """Load either the practice panel or the separate evaluation panel.
 
     Validate the complete source and split before selecting rows. All six worked
     examples remain in development and can never enter an evaluation panel.
     """
     if split not in {"calibration", "validation"}:
-        raise ValueError("Choose calibration or validation; validation must be explicitly requested.")
+        raise ValueError("Choose calibration for practice or validation for evaluation.")
     data_dir = Path(data_dir)
     raw = read_csv(data_dir / JUDGE_DATA_SOURCE["file"])
     assignments = read_csv(data_dir / JUDGE_DATA_SOURCE["split_file"])
@@ -143,7 +144,8 @@ def request_for(row, stage, model=None, prompt=None):
                                                   "criteria": CRITERIA}}}
     if stage != "llm":
         raise ValueError("Unknown judge stage")
-    return {"model": model or LLM_MODEL, "temperature": 0, "max_tokens": 220,
+    return {"model": model or LLM_MODEL, "max_completion_tokens": 4096,
+            "reasoning_effort": "medium",
             "messages": [{"role": "system", "content": prompt or DEFAULT_PROMPTS[stage]},
                          {"role": "user", "content": json.dumps(state, ensure_ascii=False)}],
             "response_format": {"type": "json_schema", "json_schema": {
@@ -186,15 +188,15 @@ def parse_llm(raw):
 
 
 class JudgeClient:
-    """Replay validates exact request hashes. Live calls are resumable and cached.
+    """Send every judgment live and write a separate audit record for each call.
 
-    Cache entries include every HTTP attempt, reported usage and elapsed time.
-    Authorization headers are never written to disk or included in exceptions.
+    Records include each HTTP attempt, reported usage and elapsed time. They are
+    never read as responses. Authorization headers are never written to disk or
+    included in exceptions.
     """
-    def __init__(self, cache_dir, *, live=False, api_keys=None, providers=None,
+    def __init__(self, run_dir, *, api_keys=None, providers=None,
                  models=None, pricing=None, prompts=None):
-        self.cache_dir = Path(cache_dir)
-        self.live = live
+        self.run_dir = Path(run_dir)
         self.api_keys = api_keys or {}
         self.providers = dict(DEFAULT_PROVIDERS if providers is None else providers)
         config = {stage: PROVIDER_CONFIG[(stage, self.providers[stage])] for stage in ("jev", "llm")}
@@ -204,7 +206,6 @@ class JudgeClient:
         self.pricing = DEFAULT_PRICING if pricing is None else pricing
         self.prompts = dict(DEFAULT_PROMPTS if prompts is None else prompts)
         self.new_requests = 0
-        self.cache_hits = 0
 
     def configuration(self):
         """Public experiment metadata; never include API keys."""
@@ -239,22 +240,27 @@ class JudgeClient:
     def call(self, row, stage):
         request = request_for(row, stage, self.models[stage], self.prompts[stage])
         request_hash = digest({"endpoint": self.endpoints[stage], "request": request})
-        path = self.cache_dir / f"{stage}-{request_hash}.json"
-        if path.exists():
-            entry = json.loads(path.read_text())
-            if entry["request"] != request or entry["endpoint"] != self.endpoints[stage]:
-                raise ValueError("Cache request mismatch")
-            self.cache_hits += 1
-        elif not self.live:
-            raise FileNotFoundError(f"No recorded {stage} response for {row['id']}; use live mode for changed prompts/models.")
-        else:
-            if not self.api_keys.get(stage):
-                raise RuntimeError(f"Live {stage} requires {self.key_names[stage]}")
+        if not self.api_keys.get(stage):
+            raise RuntimeError(f"Live {stage} requires {self.key_names[stage]}")
+        call_id = str(uuid.uuid4())
+        path = self.run_dir / "requests" / f"{stage}-{call_id}.json"
+        audit = {"call_id": call_id, "request_hash": request_hash,
+                 "id": row["id"], "stage": stage}
+        try:
             entry = self._send(stage, request)
-            save_json(path, entry)
+        except RuntimeError as exc:
+            # Authentication/billing failures stop the run, but the failed live
+            # request still has an audit record. _send exposes no provider body.
+            save_json(path, {**audit, "endpoint": self.endpoints[stage],
+                             "request": request, "error": str(exc),
+                             "recorded_at": datetime.now(timezone.utc).isoformat()})
+            raise
+        entry.update(audit)
+        save_json(path, entry)
         attempts = entry["attempts"]
         costs = [self.attempt_cost(a, stage) for a in attempts]
-        result = {"id": row["id"], "stage": stage, "request_hash": request_hash,
+        result = {"id": row["id"], "stage": stage, "call_id": call_id,
+                  "request_hash": request_hash,
                   "cost_usd": sum(c for c, source in costs if c is not None),
                   "reported_cost_usd": sum(c for c, source in costs if source == "reported"),
                   "estimated_cost_usd": sum(c for c, source in costs if source == "estimated"),
@@ -288,7 +294,7 @@ class JudgeClient:
             self.new_requests += 1
             retry = False
             try:
-                with urllib.request.urlopen(req, timeout=60) as response:
+                with urllib.request.urlopen(req, timeout=120) as response:
                     raw = json.load(response)
                 if "error" in raw:
                     attempts.append({"error": "Provider error envelope", "response": raw,
@@ -422,6 +428,72 @@ def confidence_bands(rows, jev, llm, threshold):
                         "Jev_accuracy": jev_summary["accuracy"],
                         "LLM_accuracy": llm_summary["accuracy"],
                         "LLM_fixes": fixes, "LLM_regressions": regressions})
+    return records
+
+
+def threshold_sweep(rows, jev, llm, thresholds):
+    """Inspect candidate confidence gates on a labeled calibration panel.
+
+    This diagnostic uses the already collected independent decisions to estimate
+    each gate's accuracy and request cost; it never calls a provider or chooses
+    the notebook's threshold. The live cascade separately makes its fallback
+    requests. The paired correctness difference is cascade minus LLM accuracy.
+
+    Following the paper's paired comparison, report a one-sided 95% lower bound
+    mean(d) - 1.645 * sample_sd(d) / sqrt(n) and compare it with a -0.02 margin.
+    This small-panel approximation is diagnostic, not a performance guarantee.
+    A threshold is eligible only when every Jev and LLM decision is resolved and
+    at least two cases are available. The paper gates on winning probability;
+    these candidates gate on Jev's returned binary Choice confidence instead.
+    """
+    if not rows:
+        raise ValueError("Cannot calibrate on an empty dataset")
+    ids = [row["id"] for row in rows]
+    if len(ids) != len(set(ids)) or any(row["human_label"] not in LABELS for row in rows):
+        raise ValueError("Calibration requires unique IDs and TRUE/FALSE reference labels.")
+    candidates = list(thresholds)
+    if any(not finite_number(threshold) for threshold in candidates):
+        raise ValueError("Confidence thresholds must be between 0 and 1")
+    paired = [row for row in rows if resolved(jev.get(row["id"], {}))
+              and resolved(llm.get(row["id"], {}))]
+    paired_ids = {row["id"] for row in paired}
+    llm_summary = metrics(rows, llm, "LLM", score_ids=paired_ids)
+    jev_resolved_n = sum(resolved(jev.get(case_id, {})) for case_id in ids)
+    records = []
+    for threshold in candidates:
+        escalated = {case_id: needs_llm(jev.get(case_id, {}), threshold) for case_id in ids}
+        predictions = {case_id: combined(jev.get(case_id, {}), llm.get(case_id, {})
+                                         if escalated[case_id] else None) for case_id in ids}
+        summary = metrics(rows, predictions, "Cascade", score_ids=paired_ids)
+        differences = [int(predictions[row["id"]]["label"] == row["human_label"])
+                       - int(llm[row["id"]]["label"] == row["human_label"])
+                       for row in paired]
+        mean = sum(differences) / len(differences) if differences else None
+        lower_bound = None
+        if len(differences) >= 2:
+            sample_variance = sum((difference - mean) ** 2 for difference in differences) / (len(differences) - 1)
+            lower_bound = mean - 1.645 * math.sqrt(sample_variance / len(differences))
+        complete = len(paired) == len(rows) and len(paired) >= 2
+        passes = lower_bound >= -0.02 if complete else None
+        cascade_cost = summary["cost_usd"] if not summary["unknown_cost_attempts"] else None
+        llm_cost = llm_summary["cost_usd"] if not llm_summary["unknown_cost_attempts"] else None
+        savings = (1 - cascade_cost / llm_cost
+                   if cascade_cost is not None and llm_cost is not None and llm_cost > 0 else None)
+        accepted_n = sum(not value for value in escalated.values())
+        records.append({
+            "threshold": threshold, "n": len(rows), "accepted_n": accepted_n,
+            "accepted_fraction": accepted_n / len(rows), "llm_routes": len(rows) - accepted_n,
+            "jev_resolved_n": jev_resolved_n, "llm_resolved_n": llm_summary["resolved_n"],
+            "paired_n": len(paired), "cascade_accuracy": summary["accuracy"],
+            "precision_TRUE": summary["precision_TRUE"], "recall_TRUE": summary["recall_TRUE"],
+            "FP": summary["FP"], "FN": summary["FN"],
+            "llm_accuracy": llm_summary["accuracy"], "accuracy_difference": mean,
+            "accuracy_difference_lcb_95": lower_bound, "noninferiority_margin": -0.02,
+            "noninferiority_pass": passes, "cascade_cost_usd": cascade_cost,
+            "llm_cost_usd": llm_cost, "cost_savings_fraction": savings,
+            "unknown_cost_attempts": summary["unknown_cost_attempts"],
+            "status": ("meets_margin" if passes else "below_margin") if complete else "insufficient_evidence",
+        })
     return records
 
 

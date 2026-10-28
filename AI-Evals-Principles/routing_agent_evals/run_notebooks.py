@@ -1,4 +1,4 @@
-"""Execute notebooks in fresh kernels with API credentials or a local replay directory."""
+"""Execute live judge notebooks in fresh kernels using API credentials."""
 import argparse
 from pathlib import Path
 

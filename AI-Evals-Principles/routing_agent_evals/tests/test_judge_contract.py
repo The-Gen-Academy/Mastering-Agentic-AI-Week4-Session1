@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import tempfile
@@ -65,10 +66,10 @@ class OfflineTestCase(unittest.TestCase):
 
 
 class StubTransport(lab.JudgeClient):
-    """Use the production parsing/cache paths with fabricated provider responses."""
+    """Use production parsing and request logs with fabricated provider responses."""
 
-    def __init__(self, cache_dir, responses=None, **kwargs):
-        super().__init__(cache_dir, live=True,
+    def __init__(self, run_dir, responses=None, **kwargs):
+        super().__init__(run_dir,
                          api_keys={"jev": "offline-test-only", "llm": "offline-test-only"}, **kwargs)
         self.responses = responses or {"jev": jev_response(), "llm": llm_response()}
         self.sent = []
@@ -126,6 +127,19 @@ class PromptContractTests(OfflineTestCase):
         self.assertEqual(llm["messages"][0]["content"], prompts.INDIRECT_OR_UNDERSPECIFIED_FAILURE_PROMPT)
         for payload in (jev, llm):
             self.assertNotIn("SECRET_", json.dumps(payload))
+
+    def test_gpt5_request_uses_reasoning_model_parameters(self):
+        request = lab.request_for(row(), "llm")
+        self.assertEqual(lab.LLM_MODEL, "gpt-5-2025-08-07")
+        self.assertEqual(request["model"], lab.LLM_MODEL)
+        self.assertEqual(request["max_completion_tokens"], 4096)
+        self.assertEqual(request["reasoning_effort"], "medium")
+        self.assertNotIn("temperature", request)
+        self.assertNotIn("max_tokens", request)
+        schema = request["response_format"]["json_schema"]
+        self.assertTrue(schema["strict"])
+        self.assertEqual(schema["schema"]["properties"]["label"], {"type": "boolean"})
+        self.assertEqual(set(schema["schema"]["required"]), {"label", "reasoning"})
 
 
 class DatasetTests(OfflineTestCase):
@@ -254,19 +268,49 @@ class ConfidenceGateTests(OfflineTestCase):
         self.assertIsNotNone(result["error"])
 
 
-class CacheTests(OfflineTestCase):
-    def test_prompt_change_requires_new_response_and_preserves_old_cache(self):
+class LiveRequestTests(OfflineTestCase):
+    def test_identical_requests_are_sent_twice_and_logged_separately(self):
         with tempfile.TemporaryDirectory() as folder:
             client = StubTransport(folder)
             first = client.call(row(), "jev")
             repeated = client.call(row(), "jev")
             self.assertEqual(first["request_hash"], repeated["request_hash"])
-            self.assertEqual(len(client.sent), 1)
+            self.assertNotEqual(first["call_id"], repeated["call_id"])
+            self.assertEqual(len(client.sent), 2)
+            logs = sorted((Path(folder) / "requests").glob("jev-*.json"))
+            self.assertEqual(len(logs), 2)
+            entries = [json.loads(path.read_text()) for path in logs]
+            self.assertEqual({entry["call_id"] for entry in entries},
+                             {first["call_id"], repeated["call_id"]})
+            self.assertEqual({entry["request_hash"] for entry in entries},
+                             {first["request_hash"]})
+            for entry in entries:
+                self.assertEqual(entry["request"], client.sent[0][1])
+                self.assertNotIn("offline-test-only", json.dumps(entry))
+
+    def test_prompt_change_is_logged_without_overwriting_earlier_call(self):
+        with tempfile.TemporaryDirectory() as folder:
+            client = StubTransport(folder)
+            first = client.call(row(), "jev")
             client.prompts["jev"] += "\nClarify the selected failure boundary."
             changed = client.call(row(), "jev")
             self.assertNotEqual(first["request_hash"], changed["request_hash"])
+            self.assertNotEqual(first["call_id"], changed["call_id"])
             self.assertEqual(len(client.sent), 2)
-            self.assertEqual(len(list(Path(folder).glob("jev-*.json"))), 2)
+            self.assertEqual(len(list((Path(folder) / "requests").glob("jev-*.json"))), 2)
+
+    def test_independent_baseline_and_fallback_each_make_fresh_llm_calls(self):
+        with tempfile.TemporaryDirectory() as folder:
+            client = StubTransport(folder, {"jev": jev_response(confidence=0.69),
+                                            "llm": llm_response()})
+            baseline = client.call(row(), "llm")
+            cascade = lab.run_cascade([row()], client, 0.70)["case"]
+            self.assertEqual([stage for stage, request in client.sent], ["llm", "jev", "llm"])
+            self.assertEqual(client.sent[0][1], client.sent[2][1])
+            self.assertNotEqual(baseline["call_id"], cascade["call_id"])
+            self.assertEqual(baseline["request_hash"], cascade["request_hash"])
+            self.assertEqual(cascade["route"], "LLM")
+            self.assertEqual(len(list((Path(folder) / "requests").glob("llm-*.json"))), 2)
 
 
 class MetricTests(OfflineTestCase):
@@ -334,6 +378,98 @@ class MetricTests(OfflineTestCase):
         self.assertEqual(band["LLM_regressions"], 1)
         self.assertEqual(band["Jev_accuracy"], 0.5)
         self.assertEqual(band["LLM_accuracy"], 0.5)
+
+
+class ThresholdDiagnosticTests(OfflineTestCase):
+    def test_paired_lower_bound_and_costs_describe_each_candidate(self):
+        rows = [row(case_id) for case_id in ("loss", "gain", "same", "escalated")]
+        jev = {
+            "loss": {"label": "FALSE", "confidence": 0.9, "cost_usd": 0.01},
+            "gain": {"label": "TRUE", "confidence": 0.9, "cost_usd": 0.01},
+            "same": {"label": "TRUE", "confidence": 0.9, "cost_usd": 0.01},
+            "escalated": {"label": "FALSE", "confidence": 0.6, "cost_usd": 0.01},
+        }
+        llm = {case_id: {"label": "FALSE" if case_id == "gain" else "TRUE", "cost_usd": 0.1}
+               for case_id in jev}
+        original = copy.deepcopy((jev, llm))
+        original_threshold = lab.CONFIDENCE_THRESHOLD
+        results = lab.threshold_sweep(rows, jev, llm, [0.70, 1.0])
+        self.assertEqual([entry["threshold"] for entry in results], [0.70, 1.0])
+        candidate, all_fallback = results
+        self.assertEqual(candidate["n"], 4)
+        self.assertEqual(candidate["paired_n"], 4)
+        self.assertEqual(candidate["accepted_n"], 3)
+        self.assertEqual(candidate["llm_routes"], 1)
+        self.assertEqual(candidate["accepted_fraction"], 0.75)
+        self.assertEqual(candidate["cascade_accuracy"], 0.75)
+        self.assertEqual(candidate["llm_accuracy"], 0.75)
+        self.assertEqual(candidate["accuracy_difference"], 0.0)
+        # The paired differences are [-1, +1, 0, 0], with sample SD sqrt(2/3).
+        expected_lower_bound = -1.645 * math.sqrt(2 / 3) / math.sqrt(4)
+        self.assertAlmostEqual(candidate["accuracy_difference_lcb_95"], expected_lower_bound)
+        self.assertEqual(candidate["noninferiority_margin"], -0.02)
+        self.assertIs(candidate["noninferiority_pass"], False)
+        self.assertAlmostEqual(candidate["cascade_cost_usd"], 0.14)
+        self.assertAlmostEqual(candidate["llm_cost_usd"], 0.4)
+        self.assertAlmostEqual(candidate["cost_savings_fraction"], 0.65)
+        self.assertEqual(all_fallback["accepted_n"], 0)
+        self.assertEqual(all_fallback["llm_routes"], 4)
+        self.assertEqual(all_fallback["accuracy_difference_lcb_95"], 0.0)
+        self.assertIs(all_fallback["noninferiority_pass"], True)
+        self.assertAlmostEqual(all_fallback["cascade_cost_usd"], 0.44)
+        self.assertAlmostEqual(all_fallback["cost_savings_fraction"], -0.1)
+        self.assertEqual((jev, llm), original)
+        self.assertEqual(lab.CONFIDENCE_THRESHOLD, original_threshold)
+
+    def test_missing_or_invalid_decisions_cannot_certify_a_threshold(self):
+        rows = [row("complete"), row("unresolved")]
+        for unresolved_stage in ("jev", "llm"):
+            for bad_result in ({}, {"label": None}, {"label": "TRUE", "error": "bad output"}):
+                jev = {case["id"]: {"label": "TRUE", "confidence": 0.9} for case in rows}
+                llm = {case["id"]: {"label": "TRUE"} for case in rows}
+                (jev if unresolved_stage == "jev" else llm)["unresolved"] = bad_result
+                with self.subTest(stage=unresolved_stage, result=bad_result):
+                    result = lab.threshold_sweep(rows, jev, llm, [0.70])[0]
+                    self.assertEqual(result["paired_n"], 1)
+                    self.assertEqual(result["status"], "insufficient_evidence")
+                    self.assertIsNone(result["noninferiority_pass"])
+                    self.assertIsNone(result["accuracy_difference_lcb_95"])
+
+    def test_single_example_cannot_supply_a_sample_variance_bound(self):
+        result = lab.threshold_sweep(
+            [row()], {"case": {"label": "TRUE", "confidence": 0.9}},
+            {"case": {"label": "TRUE"}}, [0.70])[0]
+        self.assertEqual(result["paired_n"], 1)
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.assertIsNone(result["noninferiority_pass"])
+        self.assertIsNone(result["accuracy_difference_lcb_95"])
+
+    def test_good_resolved_subset_cannot_certify_an_incomplete_panel(self):
+        rows = [row(case_id) for case_id in ("one", "two", "missing")]
+        jev = {case_id: {"label": "TRUE", "confidence": 0.9} for case_id in ("one", "two")}
+        llm = {case["id"]: {"label": "TRUE"} for case in rows}
+        result = lab.threshold_sweep(rows, jev, llm, [0.70])[0]
+        self.assertEqual(result["paired_n"], 2)
+        self.assertEqual(result["accuracy_difference_lcb_95"], 0.0)
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.assertIsNone(result["noninferiority_pass"])
+
+    def test_unknown_provider_cost_is_not_reported_as_zero_or_savings(self):
+        rows = [row(case_id) for case_id in ("one", "two")]
+        for unknown_stage in ("jev", "llm"):
+            jev = {case["id"]: {"label": "TRUE", "confidence": 0.6, "cost_usd": 0.01}
+                   for case in rows}
+            llm = {case["id"]: {"label": "TRUE", "cost_usd": 0.1} for case in rows}
+            (jev if unknown_stage == "jev" else llm)["one"]["unknown_cost_attempts"] = 1
+            with self.subTest(stage=unknown_stage):
+                result = lab.threshold_sweep(rows, jev, llm, [0.70])[0]
+                self.assertEqual(result["unknown_cost_attempts"], 1)
+                self.assertIsNone(result["cascade_cost_usd"])
+                self.assertIsNone(result["cost_savings_fraction"])
+                if unknown_stage == "llm":
+                    self.assertIsNone(result["llm_cost_usd"])
+                else:
+                    self.assertAlmostEqual(result["llm_cost_usd"], 0.2)
 
 
 if __name__ == "__main__":

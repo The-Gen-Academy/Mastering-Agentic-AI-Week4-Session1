@@ -6,8 +6,27 @@ Jev, GPT-5, and Jev with GPT-5 fallback.
 
 **[Open the executed notebook with live results](routing_agent_evals/jev_vs_llm_judge.ipynb).**
 All nine code cells have completed outputs, including the threshold table, 150-case
-comparison, 19 fallback decisions, and estimated costs. You can inspect these results
+cost–accuracy table and chart, and 19 fallback decisions. You can inspect these results
 without running the APIs again.
+
+## Cost–accuracy tradeoff
+
+The completed run compares all three approaches on the same 150 evaluation cases:
+
+| Approach | Accuracy | Failure recall | Estimated cost (USD) | Savings vs GPT-5 |
+| --- | ---: | ---: | ---: | ---: |
+| Jev | 93.3% | 45.5% | $0.0136 | 98.5% |
+| GPT-5 | 94.7% | 63.6% | $0.9187 | 0.0% |
+| Jev + GPT-5 fallback | 94.7% | 63.6% | $0.2188 | 76.2% |
+
+The cascade achieved the same measured accuracy as GPT-5 at **76.2% lower estimated
+cost**, calling GPT-5 for 19 of 150 cases. Compared with Jev alone, it detected 7 of
+11 labeled failures instead of 5. These costs exclude practice calls.
+
+Accuracy measures agreement with the dataset's provisional labels. Always answering
+FALSE already reaches 92.7% accuracy while detecting no failures, so read accuracy
+alongside failure recall. The notebook includes the cost–accuracy chart and detailed
+false-alarm, coverage, and unresolved counts.
 
 ## What the judges check
 
@@ -61,7 +80,7 @@ Boolean verdict with a short explanation.
    across candidate confidence thresholds.
 2. Call Jev on **150 separate evaluation cases**.
 3. Keep valid Jev answers at confidence **0.70 or above**. For lower confidence or
-   invalid output, make a fresh GPT-5 fallback call with the same evidence and policy.
+   invalid output, call GPT-5 with the same evidence and policy.
    If fallback fails, leave the final verdict unresolved.
 4. Run a separate GPT-5 baseline on all 150 evaluation cases, including cases that
    already received fallback. It never sees Jev's answer or confidence.
@@ -74,7 +93,7 @@ are excluded from scoring. The supplied labels are provisional, so inspect disag
 before interpreting them as model errors.
 
 The flow is **Jev call → validate output → confidence gate → GPT-5 fallback → final
-verdict → logging**. Every judge invocation sends a fresh API request. Re-running an
+verdict → logging**. Every judge invocation sends an API request. Re-running an
 inference cell incurs new API usage; no local response cache or replay is used.
 
 ## Choose the confidence threshold
@@ -111,7 +130,7 @@ validation, escalation, threshold diagnostics, and metrics. `notebook_utils.py` 
 hidden key entry and report saving. [Dataset details](routing_agent_evals/data/README.md)
 describe the labels and split.
 
-`run_notebooks.py` executes the Jev-only and comparison notebooks in fresh kernels and
+`run_notebooks.py` executes the Jev-only and comparison notebooks in separate kernels and
 saves executed copies under `.runs/executed/`. Use `--jev-only` to run only Jev, or
 `--include-router` to also run the router generation lesson.
 

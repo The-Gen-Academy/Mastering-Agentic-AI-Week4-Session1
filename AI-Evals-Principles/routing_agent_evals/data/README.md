@@ -26,7 +26,7 @@ practice membership, and prompt-example membership. It has 150 development cases
 
 The API helper calls the practice set `calibration` and the evaluation set `validation`.
 The Jev-only notebook runs the 21 practice cases. The comparison notebook runs both sets
-with fresh API requests and a confidence threshold of **0.70**. The practice table
+with live API requests and a confidence threshold of **0.70**. The practice table
 compares alternative thresholds using the CMU calibration approach.
 
 Choose the policy and threshold using practice results, then inspect the separate

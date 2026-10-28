@@ -1,4 +1,4 @@
-"""Execute live judge notebooks in fresh kernels using API credentials."""
+"""Execute live judge notebooks in separate kernels using API credentials."""
 import argparse
 from pathlib import Path
 

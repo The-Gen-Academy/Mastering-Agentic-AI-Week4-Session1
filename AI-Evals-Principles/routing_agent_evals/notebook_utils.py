@@ -10,7 +10,7 @@ from prompts.llm_as_judge_prompt import FAILURE_CATEGORY, FAILURE_QUESTION
 
 
 def setup_run(lab, prompts=None, stages=("jev", "llm")):
-    """Create a fresh live client; saved request logs are never replayed."""
+    """Create a live client; saved request logs are never replayed."""
     lab = Path(lab)
     load_dotenv(lab / ".env", override=False)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -33,7 +33,7 @@ def setup_run(lab, prompts=None, stages=("jev", "llm")):
         client.api_keys[stage] = key
     run_dir.mkdir(parents=True, exist_ok=True)
     print("Live models:", {stage: client.models[stage] for stage in stages})
-    print("Every judge call sends a fresh API request. Re-running inference cells incurs new usage.")
+    print("Every judge call sends an API request. Re-running inference cells incurs new usage.")
     return client, run_dir
 
 

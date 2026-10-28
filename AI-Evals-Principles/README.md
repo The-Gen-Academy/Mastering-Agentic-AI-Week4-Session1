@@ -4,6 +4,11 @@ A doctor's scheduling assistant turns messages such as “I can work late on Fri
 into actions. This lab checks whether the assistant understood the request, using
 Jev, GPT-5, and Jev with GPT-5 fallback.
 
+**[Open the executed notebook with live results](routing_agent_evals/jev_vs_llm_judge.ipynb).**
+All nine code cells have completed outputs, including the threshold table, 150-case
+comparison, 19 fallback decisions, and estimated costs. You can inspect these results
+without running the APIs again.
+
 ## What the judges check
 
 **Failure category:** Failure to interpret indirect or underspecified requests.

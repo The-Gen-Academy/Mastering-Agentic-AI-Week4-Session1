@@ -15,27 +15,34 @@ from judge_lab import (
     CRITERIA, DEFAULT_PROVIDERS, JUDGE_DATA_SOURCE,
     JudgeClient, digest, save_json,
 )
+from prompts.llm_as_judge_prompt import FAILURE_CATEGORY, FAILURE_QUESTION
 
 
-def setup_run(lab, mode="auto", prompts=None):
+def setup_run(lab, mode="auto", prompts=None, split="calibration"):
     """Return the client, output directory, and any manifest to verify on replay.
 
     Auto mode replays a completed local run, or runs live on a fresh checkout.
     JUDGE_MODE, JUDGE_RUN_DIR, and JUDGE_EVIDENCE_DIR remain available for scripts.
     """
     lab = Path(lab)
+    if split not in {"calibration", "validation"}:
+        raise ValueError("Choose calibration or validation.")
     load_dotenv(lab / ".env", override=False)
-    run_dir = Path(os.environ.get("JUDGE_RUN_DIR", lab / ".runs/indirect-judge"))
+    run_dir = Path(os.environ.get("JUDGE_RUN_DIR", lab / ".runs/indirect-judge" / split))
     evidence_dir = Path(os.environ.get("JUDGE_EVIDENCE_DIR", run_dir))
     manifest_path = evidence_dir / "manifest.json"
     if mode == "auto":
-        mode = os.environ.get("JUDGE_MODE", "replay" if manifest_path.exists() else "live")
+        mode = os.environ.get("JUDGE_MODE", "auto")
+    if mode == "auto":
+        mode = "replay" if manifest_path.exists() else "live"
     if mode not in {"live", "replay"}:
         raise ValueError("Choose auto, live, or replay for mode.")
     if mode == "replay" and not manifest_path.exists():
         raise RuntimeError("No completed run to replay. Run live first, or set JUDGE_EVIDENCE_DIR to a saved run.")
 
     manifest = json.loads(manifest_path.read_text()) if mode == "replay" else {}
+    if manifest and manifest.get("split") != split:
+        raise ValueError("Saved run uses a different split; choose the matching evidence directory.")
     providers = manifest.get("providers", DEFAULT_PROVIDERS) if mode == "replay" else {
         "jev": os.environ.get("JEV_PROVIDER", "typesafe"),
         "llm": os.environ.get("LLM_PROVIDER", "openai"),
@@ -65,20 +72,28 @@ def setup_run(lab, mode="auto", prompts=None):
     return client, run_dir, manifest
 
 
-def save_run(client, run_dir, manifest, rows, threshold, comparison, bands):
+def records_for_json(frame):
+    """Keep unavailable quality metrics JSON-null, including pandas NaN values."""
+    return frame.astype(object).where(frame.notna(), None).to_dict("records")
+
+
+def save_run(client, run_dir, manifest, rows, threshold, comparison, bands,
+             split="calibration", score_ids=None):
     """Save reports, or verify the same data, policy, cutoff, and metrics on replay."""
     summary = {
+        "split": split, "failure_category": FAILURE_CATEGORY, "question": FAILURE_QUESTION,
         "dataset_hash": digest(rows), "dataset_source": JUDGE_DATA_SOURCE,
         "policy_hash": digest([client.prompts, CRITERIA]),
         "evaluation_ids": [row["id"] for row in rows],
+        "scoring_ids": list(score_ids) if score_ids is not None else [],
         "threshold": threshold, "threshold_kind": "confidence",
         **client.configuration(),
-        "comparison_metrics": comparison.drop(
+        "comparison_metrics": records_for_json(comparison.drop(
             columns=["cost_per_1000_USD", "LLM_fraction"]
-        ).loc[comparison["method"] != "Always FALSE"].to_dict("records"),
+        ).loc[comparison["method"] != "Always FALSE"]),
     }
     if not client.live:
-        for field in ("dataset_hash", "dataset_source", "policy_hash", "evaluation_ids",
+        for field in ("split", "failure_category", "question", "dataset_hash", "dataset_source", "policy_hash", "evaluation_ids", "scoring_ids",
                       "threshold", "threshold_kind", "comparison_metrics"):
             if summary[field] != manifest[field]:
                 raise ValueError(f"Replay does not match the saved run: {field}")
@@ -89,7 +104,7 @@ def save_run(client, run_dir, manifest, rows, threshold, comparison, bands):
         print("Replay this run by setting JUDGE_MODE=replay and JUDGE_EVIDENCE_DIR to", run_dir)
     save_json(run_dir / "summary.json", {
         **summary, "mode": "live" if client.live else "replay",
-        "comparison": comparison.to_dict("records"), "bands": bands,
+        "comparison": records_for_json(comparison), "bands": bands,
         "new_http_attempts": client.new_requests,
     })
     comparison.to_csv(run_dir / "comparison.csv", index=False)

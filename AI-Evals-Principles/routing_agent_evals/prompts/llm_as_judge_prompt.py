@@ -189,6 +189,9 @@ reasoning error.
 """.strip()
 )
 
+FAILURE_CATEGORY = "Failure to interpret indirect or underspecified requests."
+FAILURE_QUESTION = "Did the router fail to interpret the indirect or underspecified scheduling request?"
+
 CHOICE_CRITERIA = {
     "TRUE": "The prediction is not defensible under the routing policy and fails to recover an indirect or underspecified scheduling request.",
     "FALSE": "This specific interpretation failure is not established; the route may be correct or contain a different kind of error.",
@@ -196,7 +199,8 @@ CHOICE_CRITERIA = {
 
 JEV_JUDGE_PROMPT = (
     JUDGE_RULES + "\n\n" + FEW_SHOT_EXAMPLES_TEXT
-    + "\n\nChoose TRUE for label=true in the rubric, or FALSE for label=false."
+    + "\n\nBINARY QUESTION\n" + FAILURE_QUESTION
+    + "\nChoose TRUE for label=true in the rubric, or FALSE for label=false."
 )
 
 INDIRECT_OR_UNDERSPECIFIED_FAILURE_PROMPT = (

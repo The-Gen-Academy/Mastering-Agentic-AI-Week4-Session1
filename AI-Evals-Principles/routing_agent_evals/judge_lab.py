@@ -44,6 +44,7 @@ DEFAULT_PRICING = {"jev": {"provider": "typesafe", "model": "jev-1.13.0",
 LABELS = ("TRUE", "FALSE")
 JUDGE_DATA_SOURCE = {
     "file": "llm_as_judge_indirect_underspecified.csv",
+    "split_file": "judge_indirect_split.csv",
     "revision": "21d0f8c2339ecf64420fb0fffd08be34e60a8b0b",
     "label_column": "Indirect_or_Underspecified_Failure",
     "excluded_prompt_examples": sorted(FEW_SHOT_CASE_IDS),
@@ -72,22 +73,65 @@ def save_json(path, value):
     temporary.replace(path)
 
 
-def load_dataset(data_dir):
-    """Load the current reference labels, excluding the six prompt examples."""
+def load_dataset(data_dir, split="calibration"):
+    """Load the reference notebook's frozen panel; validation is explicit opt-in.
+
+    Validate the complete source and split before selecting rows. All six worked
+    examples remain in development and can never enter an evaluation panel.
+    """
+    if split not in {"calibration", "validation"}:
+        raise ValueError("Choose calibration or validation; validation must be explicitly requested.")
     data_dir = Path(data_dir)
     raw = read_csv(data_dir / JUDGE_DATA_SOURCE["file"])
-    rows = []
+    assignments = read_csv(data_dir / JUDGE_DATA_SOURCE["split_file"])
+    expected_ids = {f"TEST_{number:03d}" for number in range(1, 301)}
+    for name, records in (("reference dataset", raw), ("split file", assignments)):
+        ids = [row.get("TEST_ID") for row in records]
+        if len(ids) != len(set(ids)) or set(ids) != expected_ids:
+            raise ValueError(f"The {name} must contain all 300 unique TEST_ID values.")
+
+    references = {}
     for row in raw:
-        if row["TEST_ID"] in FEW_SHOT_CASE_IDS:
-            continue
-        label = row[JUDGE_DATA_SOURCE["label_column"]].strip().upper()
-        if label not in LABELS or not row["USER_INPUT"].strip() or not row["final_intent"].strip():
+        label = row.get(JUDGE_DATA_SOURCE["label_column"], "").strip().upper()
+        if (label not in LABELS or not row.get("USER_INPUT", "").strip()
+                or not row.get("final_intent", "").strip()):
             raise ValueError(f"Invalid judge reference: {row['TEST_ID']}")
-        rows.append({"id": row["TEST_ID"], "user_query": row["USER_INPUT"],
-                     "predicted_intent": row["final_intent"], "human_label": label})
-    if len({r["id"] for r in rows}) != len(rows):
-        raise ValueError("Duplicate test IDs")
-    return rows
+        references[row["TEST_ID"]] = {
+            "id": row["TEST_ID"], "user_query": row["USER_INPUT"],
+            "predicted_intent": row["final_intent"], "human_label": label,
+        }
+
+    panels = {"calibration": set(), "validation": set(), "development": set(), "prompt": set()}
+    groups = {"development": set(), "validation": set()}
+    for row in assignments:
+        case_id = row["TEST_ID"]
+        partition = row.get("split")
+        flags = [row.get(field, "").strip().lower() for field in ("in_calibration", "in_prompt")]
+        group = row.get("paraphrase_group", "").strip()
+        if partition not in groups or any(flag not in {"true", "false"} for flag in flags) or not group:
+            raise ValueError(f"Invalid split assignment: {case_id}")
+        in_calibration, in_prompt = [flag == "true" for flag in flags]
+        if in_prompt != (case_id in FEW_SHOT_CASE_IDS):
+            raise ValueError("Prompt-example IDs differ from the frozen rubric.")
+        if (in_prompt or in_calibration) and partition != "development":
+            raise ValueError("Calibration and prompt examples must remain in development.")
+        if in_prompt and in_calibration:
+            raise ValueError("Prompt examples cannot be scored as calibration cases.")
+        panels[partition].add(case_id)
+        groups[partition].add(group)
+        if in_calibration:
+            panels["calibration"].add(case_id)
+        if in_prompt:
+            panels["prompt"].add(case_id)
+
+    if (len(panels["development"]) != 150 or len(panels["validation"]) != 150
+            or len(panels["calibration"]) != 21
+            or panels["prompt"] != set(FEW_SHOT_CASE_IDS)
+            or not groups["development"].isdisjoint(groups["validation"])):
+        raise ValueError("The frozen split requires 150 development, 150 validation and 21 calibration cases, with disjoint paraphrase groups.")
+    selected_ids = panels[split]
+    # Keep the source order stable for manifests and row-level comparisons.
+    return [row for case_id, row in references.items() if case_id in selected_ids]
 
 
 def request_for(row, stage, model=None, prompt=None):
@@ -298,24 +342,47 @@ def run_cascade(rows, client, threshold, jev=None):
     return batch(rows, one)
 
 
-def metrics(rows, predictions, method):
+def resolved(result):
+    """A provider error or missing decision is not a FALSE judgment."""
+    return result.get("label") in LABELS and not result.get("error")
+
+
+def metrics(rows, predictions, method, score_ids=None):
+    """Score resolved decisions; retain coverage and costs for every requested row.
+
+    ``score_ids`` restricts quality metrics to a common panel for comparisons.
+    Unresolved calls never become false negatives. With no scored cases, quality
+    percentages are unavailable (None), while coverage and accounting remain valid.
+    """
     if not rows:
         raise ValueError("Cannot score an empty dataset")
-    truth = [r["human_label"] for r in rows]
-    guesses = [predictions[r["id"]].get("label") for r in rows]
+    requested_ids = {row["id"] for row in rows}
+    if len(requested_ids) != len(rows) or any(row["human_label"] not in LABELS for row in rows):
+        raise ValueError("Scoring requires unique IDs and TRUE/FALSE reference labels.")
+    allowed_ids = requested_ids if score_ids is None else set(score_ids)
+    if not allowed_ids.issubset(requested_ids):
+        raise ValueError("Scoring IDs must belong to the requested dataset.")
+    resolved_ids = {row["id"] for row in rows if resolved(predictions.get(row["id"], {}))}
+    scored = [row for row in rows if row["id"] in resolved_ids & allowed_ids]
+    truth = [row["human_label"] for row in scored]
+    guesses = [predictions[row["id"]]["label"] for row in scored]
     tp = sum(t == "TRUE" and p == "TRUE" for t, p in zip(truth, guesses))
     fp = sum(t == "FALSE" and p == "TRUE" for t, p in zip(truth, guesses))
-    fn = sum(t == "TRUE" and p != "TRUE" for t, p in zip(truth, guesses))
+    fn = sum(t == "TRUE" and p == "FALSE" for t, p in zip(truth, guesses))
     tn = sum(t == "FALSE" and p == "FALSE" for t, p in zip(truth, guesses))
     precision = tp / (tp + fp) if tp + fp else 0
     recall = tp / (tp + fn) if tp + fn else 0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0
-    results = [predictions[r["id"]] for r in rows]
-    return {"method": method, "n": len(rows), "positive_references": truth.count("TRUE"),
-            "accuracy": sum(t == p for t, p in zip(truth, guesses)) / len(rows),
-            "precision_TRUE": precision, "recall_TRUE": recall, "f1_TRUE": f1,
-            "TN": tn, "FP": fp, "FN_including_unresolved": fn, "TP": tp,
-            "unresolved": sum(p not in LABELS for p in guesses),
+    results = [predictions.get(row["id"], {}) for row in rows]
+    return {"method": method, "n": len(rows),
+            "positive_references": sum(row["human_label"] == "TRUE" for row in rows),
+            "scored_n": len(scored), "scored_positive_references": truth.count("TRUE"),
+            "resolved_n": len(resolved_ids), "coverage": len(resolved_ids) / len(rows),
+            "accuracy": sum(t == p for t, p in zip(truth, guesses)) / len(scored) if scored else None,
+            "precision_TRUE": precision if scored else None,
+            "recall_TRUE": recall if scored else None, "f1_TRUE": f1 if scored else None,
+            "TN": tn, "FP": fp, "FN": fn, "TP": tp,
+            "unresolved": len(rows) - len(resolved_ids),
             "cost_usd": sum(r.get("cost_usd", 0) for r in results),
             "reported_cost_usd": sum(r.get("reported_cost_usd", 0) for r in results),
             "estimated_cost_usd": sum(r.get("estimated_cost_usd", 0) for r in results),
@@ -325,17 +392,35 @@ def metrics(rows, predictions, method):
             "llm_routes": sum(r.get("route") == "LLM" for r in results)}
 
 
+def comparison_metrics(rows, approaches):
+    """Compare each approach on exactly the same successfully judged cases."""
+    if not approaches:
+        raise ValueError("Provide at least one judge approach to compare.")
+    paired_ids = {row["id"] for row in rows}
+    for predictions in approaches.values():
+        paired_ids &= {row["id"] for row in rows if resolved(predictions.get(row["id"], {}))}
+    return [metrics(rows, predictions, name, score_ids=paired_ids)
+            for name, predictions in approaches.items()]
+
+
 def confidence_bands(rows, jev, llm, threshold):
+    """Measure fixes/regressions only where both judges returned valid decisions."""
     records = []
     for escalated, label in [(False, "Kept by Jev"), (True, "Sent to LLM")]:
-        group = [r for r in rows if needs_llm(jev[r["id"]], threshold) == escalated]
+        group = [r for r in rows if needs_llm(jev.get(r["id"], {}), threshold) == escalated]
         if not group:
             continue
-        fixes = sum(jev[r["id"]]["label"] != r["human_label"] and llm[r["id"]]["label"] == r["human_label"] for r in group)
-        regressions = sum(jev[r["id"]]["label"] == r["human_label"] and llm[r["id"]]["label"] != r["human_label"] for r in group)
-        records.append({"group": label, "n": len(group),
-                        "Jev_accuracy": metrics(group, jev, "Jev")["accuracy"],
-                        "LLM_accuracy": metrics(group, llm, "LLM")["accuracy"],
+        paired = [r for r in group if resolved(jev.get(r["id"], {})) and resolved(llm.get(r["id"], {}))]
+        paired_ids = {r["id"] for r in paired}
+        jev_summary = metrics(group, jev, "Jev", score_ids=paired_ids)
+        llm_summary = metrics(group, llm, "LLM", score_ids=paired_ids)
+        fixes = sum(jev[r["id"]]["label"] != r["human_label"] and llm[r["id"]]["label"] == r["human_label"] for r in paired)
+        regressions = sum(jev[r["id"]]["label"] == r["human_label"] and llm[r["id"]]["label"] != r["human_label"] for r in paired)
+        records.append({"group": label, "n": len(group), "paired_n": len(paired),
+                        "Jev_unresolved": jev_summary["unresolved"],
+                        "LLM_unresolved": llm_summary["unresolved"],
+                        "Jev_accuracy": jev_summary["accuracy"],
+                        "LLM_accuracy": llm_summary["accuracy"],
                         "LLM_fixes": fixes, "LLM_regressions": regressions})
     return records
 
